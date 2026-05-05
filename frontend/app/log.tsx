@@ -6,15 +6,16 @@ import {
   TouchableOpacity,
   StyleSheet,
   ScrollView,
+  Modal,
   Alert,
   ActivityIndicator,
   Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
-import { createLog, getCategories, getLogs, ActivityLog } from '@/lib/api';
+import { createLog, deleteLog, getCategories, getLogs, ActivityLog } from '@/lib/api';
 
-const BUILTIN_TYPES = ['caffeine', 'exercise', 'meal', 'meditation', 'reading', 'sleep', 'work'];
+const BUILTIN_TYPES = ['sleep', 'exercise', 'caffeine'];
 
 // Returns true if the new entry's time overlaps with an existing log.
 // Entries with no end time are treated as points in time.
@@ -65,6 +66,7 @@ function WebDateInput({ value, onChange }: { value: Date; onChange: (d: Date) =>
     <input
       type="datetime-local"
       value={toLocalInputValue(value)}
+      max={toLocalInputValue(new Date())}
       onChange={(e: React.ChangeEvent<HTMLInputElement>) => onChange(new Date(e.target.value))}
       style={{
         fontSize: 15, padding: 12, borderRadius: 8,
@@ -82,6 +84,7 @@ function WebDateOnlyInput({ value, onChange }: { value: Date; onChange: (d: Date
     <input
       type="date"
       value={toLocalDateValue(value)}
+      max={toLocalDateValue(new Date())}
       onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
         const d = new Date(e.target.value + 'T12:00:00');
         if (!isNaN(d.getTime())) onChange(d);
@@ -110,6 +113,19 @@ export default function LogScreen() {
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
   const [picker, setPicker] = useState<PickerState>(null);
+
+  type ConfirmState = {
+    title: string;
+    message: string;
+    confirmLabel: string;
+    destructive?: boolean;
+    resolve: (v: boolean) => void;
+  };
+  const [confirm, setConfirm] = useState<ConfirmState | null>(null);
+
+  function showConfirm(title: string, message: string, confirmLabel: string, destructive = false): Promise<boolean> {
+    return new Promise((resolve) => setConfirm({ title, message, confirmLabel, destructive, resolve }));
+  }
 
   const typeInputRef = useRef<TextInput>(null);
 
@@ -183,7 +199,10 @@ export default function LogScreen() {
   const handleSave = async () => {
     if (!activityType) return Alert.alert('Please select an activity type.');
 
+    const now = new Date();
+
     if (isDurationZero) {
+      if (zeroDate > now) return Alert.alert('Invalid date', 'Date cannot be in the future.');
       // 0-min path: no overlap check, use zeroDate at noon for both start and end
       setSaving(true);
       try {
@@ -207,22 +226,35 @@ export default function LogScreen() {
     }
 
     // ── Timed path: overlap check then save ────────────────────────────────
+    if (startDate > now) return Alert.alert('Invalid time', 'Start time cannot be in the future.');
+
     try {
       const existing = await getLogs(activityType, 200);
+
+      // ── 0-min override check ────────────────────────────────────────────
+      const startDay = toLocalDateValue(startDate);
+      const zeroEntry = existing.find(
+        (log) => log.duration_minutes === 0 &&
+          toLocalDateValue(new Date(log.started_at)) === startDay
+      );
+      if (zeroEntry) {
+        const msg = `There's already a 0-min "${activityType}" entry on ${startDay}. Replace it with this timed entry?`;
+        const replace = await showConfirm('0-min record exists', msg, 'Replace', true);
+        if (!replace) return;
+        try { await deleteLog(zeroEntry.id); } catch {}
+      }
+
+      // ── Time-overlap check ──────────────────────────────────────────────
       const newEnd = hasEnd ? endDate : null;
-      const conflict = existing.find((log) => overlapsLog(startDate, newEnd, log));
+      const conflict = existing.find(
+        (log) => log.duration_minutes !== 0 && overlapsLog(startDate, newEnd, log)
+      );
       if (conflict) {
         const conflictTime = formatDateTime(new Date(conflict.started_at));
-        const msg = `You already have a "${activityType}" entry at ${conflictTime} that overlaps with this time. Add anyway?`;
-        const proceed = Platform.OS === 'web'
-          ? window.confirm(msg)
-          : await new Promise<boolean>((resolve) =>
-              Alert.alert('Possible duplicate', msg, [
-                { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
-                { text: 'Add Anyway', onPress: () => resolve(true) },
-              ])
-            );
+        const msg = `You already have a "${activityType}" entry at ${conflictTime} that overlaps with this time.`;
+        const proceed = await showConfirm('Overlapping entry', msg, 'Replace');
         if (!proceed) return;
+        try { await deleteLog(conflict.id); } catch {}
       }
     } catch {
       // If the check fails, proceed silently — don't block the save
@@ -406,10 +438,34 @@ export default function LogScreen() {
         <DateTimePicker
           value={picker.target === 'zero' ? zeroDate : picker.target === 'start' ? startDate : (endDate ?? new Date())}
           mode={picker.mode}
+          maximumDate={new Date()}
           display={Platform.OS === 'ios' ? 'inline' : 'default'}
           onChange={onPickerChange}
         />
       )}
+
+      <Modal visible={!!confirm} transparent animationType="fade" onRequestClose={() => { confirm?.resolve(false); setConfirm(null); }}>
+        <View style={styles.confirmOverlay}>
+          <View style={styles.confirmBox}>
+            <Text style={styles.confirmTitle}>{confirm?.title}</Text>
+            <Text style={styles.confirmMessage}>{confirm?.message}</Text>
+            <View style={styles.confirmButtons}>
+              <TouchableOpacity
+                style={styles.confirmCancelBtn}
+                onPress={() => { confirm?.resolve(false); setConfirm(null); }}
+              >
+                <Text style={styles.confirmCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.confirmActionBtn, confirm?.destructive ? styles.confirmDestructive : styles.confirmPrimary]}
+                onPress={() => { confirm?.resolve(true); setConfirm(null); }}
+              >
+                <Text style={styles.confirmActionText}>{confirm?.confirmLabel}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </ScrollView>
   );
 }
@@ -475,11 +531,25 @@ const styles = StyleSheet.create({
 
   // Timed / 0 min segmented control
   segmentedRow: {
-    flexDirection: 'row', marginTop: 20, marginBottom: 4,
-    backgroundColor: '#e5e7eb', borderRadius: 10, padding: 3,
+    flexDirection: 'row', marginTop: 14, marginBottom: 2,
+    backgroundColor: '#f3f4f6', borderRadius: 7, padding: 2,
+    alignSelf: 'flex-start',
   },
-  segBtn: { flex: 1, paddingVertical: 8, borderRadius: 8, alignItems: 'center' },
-  segBtnOn: { backgroundColor: '#fff', shadowColor: '#000', shadowOpacity: 0.08, shadowRadius: 2, elevation: 1 },
-  segBtnText: { fontSize: 14, fontWeight: '600', color: '#9ca3af' },
-  segBtnTextOn: { color: '#111827' },
+  segBtn: { paddingVertical: 4, paddingHorizontal: 12, borderRadius: 5, alignItems: 'center' },
+  segBtnOn: { backgroundColor: '#fff', shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 1, elevation: 1 },
+  segBtnText: { fontSize: 12, fontWeight: '500', color: '#9ca3af' },
+  segBtnTextOn: { color: '#374151', fontWeight: '600' },
+
+  // Confirm modal
+  confirmOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'center', alignItems: 'center', padding: 24 },
+  confirmBox: { backgroundColor: '#fff', borderRadius: 14, padding: 24, width: '100%', maxWidth: 360 },
+  confirmTitle: { fontSize: 16, fontWeight: '700', color: '#111827', marginBottom: 8 },
+  confirmMessage: { fontSize: 14, color: '#4b5563', lineHeight: 21, marginBottom: 24 },
+  confirmButtons: { flexDirection: 'row', gap: 10 },
+  confirmCancelBtn: { flex: 1, padding: 12, borderRadius: 8, borderWidth: 1, borderColor: '#d1d5db', alignItems: 'center' },
+  confirmCancelText: { fontSize: 15, fontWeight: '600', color: '#374151' },
+  confirmActionBtn: { flex: 1, padding: 12, borderRadius: 8, alignItems: 'center' },
+  confirmPrimary: { backgroundColor: '#6366f1' },
+  confirmDestructive: { backgroundColor: '#ef4444' },
+  confirmActionText: { fontSize: 15, fontWeight: '600', color: '#fff' },
 });

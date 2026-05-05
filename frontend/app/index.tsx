@@ -16,8 +16,7 @@ import {
   KeyboardAvoidingView,
 } from 'react-native';
 import { useFocusEffect } from 'expo-router';
-import { Svg, Rect, Text as SvgText, Line, G, Circle } from 'react-native-svg';
-import { LineChart } from 'react-native-chart-kit';
+import { Svg, Rect, Text as SvgText, Line, G, Circle, Path, Defs, LinearGradient, Stop } from 'react-native-svg';
 import { Ionicons } from '@expo/vector-icons';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { getLogs, deleteLog, updateLog, ActivityLog } from '@/lib/api';
@@ -83,6 +82,11 @@ function toLocalInputValue(date: Date): string {
   );
 }
 
+function toLocalDateValue(date: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
 function formatDateTime(date: Date): string {
   return date.toLocaleString(undefined, {
     month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
@@ -100,6 +104,7 @@ function EditDateInput({ value, onChange }: { value: Date; onChange: (d: Date) =
     <input
       type="datetime-local"
       value={toLocalInputValue(value)}
+      max={toLocalInputValue(new Date())}
       onChange={(e: React.ChangeEvent<HTMLInputElement>) => onChange(new Date(e.target.value))}
       style={{
         fontSize: 15, padding: 12, borderRadius: 8,
@@ -691,9 +696,7 @@ function TimelineChart({
 
               {/* Tooltip — rendered last so it appears on top */}
               {tooltip && (() => {
-                const timeStr = new Date(tooltip.log.started_at).toLocaleString(undefined, {
-                  month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
-                });
+                const timeStr = formatTimeRange(tooltip.log.started_at, tooltip.log.ended_at);
                 const dur = tooltip.log.duration_minutes
                   ? formatDuration(tooltip.log.duration_minutes) : null;
                 const noteSnippet = tooltip.log.notes
@@ -733,6 +736,25 @@ function TimelineChart({
 
 const AC_WINDOW_STEPS = [7, 14, 30, 60, 90];
 
+// Catmull-Rom → cubic Bezier smooth path through an array of {x, y} points
+function smoothCurveD(pts: Array<{ x: number; y: number }>): string {
+  if (pts.length === 0) return '';
+  if (pts.length === 1) return `M${pts[0].x.toFixed(1)},${pts[0].y.toFixed(1)}`;
+  let d = `M${pts[0].x.toFixed(1)},${pts[0].y.toFixed(1)}`;
+  for (let k = 0; k < pts.length - 1; k++) {
+    const p0 = pts[Math.max(0, k - 1)];
+    const p1 = pts[k];
+    const p2 = pts[k + 1];
+    const p3 = pts[Math.min(pts.length - 1, k + 2)];
+    const cp1x = p1.x + (p2.x - p0.x) / 6;
+    const cp1y = p1.y + (p2.y - p0.y) / 6;
+    const cp2x = p2.x - (p3.x - p1.x) / 6;
+    const cp2y = p2.y - (p3.y - p1.y) / 6;
+    d += ` C${cp1x.toFixed(1)},${cp1y.toFixed(1)} ${cp2x.toFixed(1)},${cp2y.toFixed(1)} ${p2.x.toFixed(1)},${p2.y.toFixed(1)}`;
+  }
+  return d;
+}
+
 function ActivityChart({
   type,
   logs,
@@ -742,10 +764,57 @@ function ActivityChart({
   logs: ActivityLog[];
   colorPair: string[];
 }) {
-  const [stepIdx, setStepIdx] = useState(1); // default: 14 days
-  const [tooltip, setTooltip] = useState<{ x: number; y: number; value: number } | null>(null);
+  const [stepIdx, setStepIdx] = useState(1);
+  const [offsetDays, setOffsetDays] = useState(0);
+  const [tooltip, setTooltip] = useState<{ idx: number } | null>(null);
 
-  // Aggregate duration by calendar date
+  // Refs needed by PanResponder (created once, callbacks must not close over stale state)
+  const offsetRef = useRef(0);
+  const dragBase = useRef(0);
+  const xStepRef = useRef(1);
+  const svgWrapRef = useRef<View>(null);
+
+  function setOffset(v: number) {
+    offsetRef.current = v;
+    setOffsetDays(v);
+  }
+
+  const pan = useRef(
+    PanResponder.create({
+      onMoveShouldSetPanResponder: (_, { dx, dy }) =>
+        Math.abs(dx) > 6 && Math.abs(dx) > Math.abs(dy) * 1.5,
+      onPanResponderGrant: () => { dragBase.current = offsetRef.current; },
+      onPanResponderMove: (_, { dx }) => {
+        const delta = Math.round(-dx / Math.max(xStepRef.current, 1));
+        setOffset(Math.max(0, dragBase.current + delta));
+      },
+    })
+  ).current;
+
+  // Capture-phase document listener: fires before any SVG child can call
+  // stopPropagation, then checks the click was within this chart's wrapper.
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const onDown = (e: MouseEvent) => {
+      const el = svgWrapRef.current as unknown as HTMLElement;
+      if (!el?.contains(e.target as Node)) return;
+      const startX = e.clientX;
+      const startOffset = offsetRef.current;
+      const onMove = (ev: MouseEvent) => {
+        const delta = Math.round(-(ev.clientX - startX) / Math.max(xStepRef.current, 1));
+        setOffset(Math.max(0, startOffset + delta));
+      };
+      const onUp = () => {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+      };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    };
+    document.addEventListener('mousedown', onDown, true); // capture phase
+    return () => document.removeEventListener('mousedown', onDown, true);
+  }, []);
+
   const byDate = new Map<string, number>();
   logs
     .filter((l) => l.activity_type === type && l.duration_minutes != null)
@@ -754,12 +823,27 @@ function ActivityChart({
       byDate.set(key, (byDate.get(key) ?? 0) + l.duration_minutes!);
     });
 
-  // Sort ascending, then take the last N days
-  const allDays = [...byDate.entries()].sort(([a], [b]) => a.localeCompare(b));
+  // Clamp offset so the window never scrolls past the earliest recorded day
   const windowSize = AC_WINDOW_STEPS[stepIdx];
-  const visible = allDays.slice(-windowSize);
+  const today = new Date();
+  const allDayKeys = [...byDate.keys()].sort();
+  const maxOffset = allDayKeys.length > 0
+    ? Math.max(0, Math.round(
+        (today.getTime() - new Date(allDayKeys[0] + 'T12:00:00').getTime()) / 86400000
+      ) - windowSize + 1)
+    : 0;
+  const clampedOffset = Math.min(offsetDays, maxOffset);
 
-  if (visible.length < 2) {
+  const days: Array<{ key: string; value: number | null }> = [];
+  for (let i = windowSize - 1; i >= 0; i--) {
+    const d = new Date(today);
+    d.setDate(today.getDate() - clampedOffset - i);
+    const key = dayKey(d);
+    days.push({ key, value: byDate.get(key) ?? null });
+  }
+
+  const dataPoints = days.filter((d) => d.value !== null);
+  if (dataPoints.length < 2) {
     return (
       <View style={styles.chartCard}>
         <Text style={styles.chartTitle}>
@@ -770,101 +854,179 @@ function ActivityChart({
     );
   }
 
-  // Thin out date labels so they don't overlap
-  const labelEvery = visible.length <= 7 ? 1 : visible.length <= 14 ? 2 : Math.ceil(visible.length / 7);
-  const labels = visible.map(([date], i) =>
-    i % labelEvery === 0
-      ? new Date(date + 'T12:00:00').toLocaleDateString(undefined, { month: 'numeric', day: 'numeric' })
-      : ''
-  );
-  const data = visible.map(([, mins]) => toChartValue(type, mins));
   const unit = chartUnit(type);
-  const mean = data.reduce((s, v) => s + v, 0) / data.length;
+  const chartVals = dataPoints.map((d) => toChartValue(type, d.value!));
+  const mean = chartVals.reduce((s, v) => s + v, 0) / chartVals.length;
   const meanStr = `${mean % 1 === 0 ? mean.toFixed(0) : mean.toFixed(1)} ${unit}`;
+
+  // SVG layout
+  const SVG_W = SCREEN_W - 32;
+  const SVG_H = 160;
+  const PL = 36;
+  const PR = 8;
+  const PT = 14;
+  const PB = 22;
+  const plotW = SVG_W - PL - PR;
+  const plotH = SVG_H - PT - PB;
+  const n = days.length;
+  const xStep = n > 1 ? plotW / (n - 1) : plotW;
+  xStepRef.current = xStep; // keep in sync for PanResponder
+  const xOf = (i: number) => PL + i * xStep;
+
+  const maxVal = Math.max(...dataPoints.map((d) => toChartValue(type, d.value!)));
+  const yMax = maxVal > 0 ? maxVal * 1.15 : 1;
+  const yOf = (v: number) => PT + plotH * (1 - v / yMax);
+  const meanY = yOf(mean);
+  const baseY = PT + plotH;
+
+  // Group contiguous non-null days into segments for smooth curve rendering
+  const segments: Array<Array<{ x: number; y: number }>> = [];
+  let seg: Array<{ x: number; y: number }> = [];
+  days.forEach((d, i) => {
+    if (d.value !== null) {
+      seg.push({ x: xOf(i), y: yOf(toChartValue(type, d.value)) });
+    } else if (seg.length > 0) {
+      segments.push(seg);
+      seg = [];
+    }
+  });
+  if (seg.length > 0) segments.push(seg);
+
+  const labelEvery = n <= 7 ? 1 : n <= 14 ? 2 : Math.ceil(n / 7);
+  const yTickVals = [0, yMax / 2, yMax];
+  const formatY = (v: number) => (v % 1 === 0 ? v.toFixed(0) : v.toFixed(1));
+
+  const tipDay = tooltip !== null ? days[tooltip.idx] : null;
+  const tipVal = tipDay?.value != null ? toChartValue(type, tipDay.value) : null;
+  const TIP_W = 68;
+  const tipX = tooltip !== null
+    ? Math.max(PL + 2, Math.min(xOf(tooltip.idx) - TIP_W / 2, SVG_W - PR - TIP_W - 2))
+    : 0;
+  const tipY = tooltip !== null ? Math.max(PT + 2, yOf(tipVal!) - 30) : 0;
+
+  const windowEnd = days[days.length - 1].key;
+  const windowStart = days[0].key;
+  const titleStr = clampedOffset === 0
+    ? `${type.charAt(0).toUpperCase() + type.slice(1)} — last ${windowSize} days`
+    : `${type.charAt(0).toUpperCase() + type.slice(1)} — `
+      + `${new Date(windowStart + 'T12:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`
+      + ` – ${new Date(windowEnd + 'T12:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`;
 
   return (
     <View style={styles.chartCard}>
       <View style={styles.chartHeader}>
         <View>
-          <Text style={styles.chartTitle}>
-            {type.charAt(0).toUpperCase() + type.slice(1)} — last {visible.length} days
-          </Text>
+          <Text style={styles.chartTitle}>{titleStr}</Text>
           <Text style={styles.chartMean}>avg {meanStr}</Text>
         </View>
         <View style={styles.zoomRow}>
+          {clampedOffset > 0 && (
+            <TouchableOpacity
+              style={[styles.zoomBtn, styles.zoomBtnToday]}
+              onPress={() => { setOffset(0); setTooltip(null); }}
+            >
+              <Text style={[styles.zoomBtnText, styles.zoomBtnTodayText]}>Today</Text>
+            </TouchableOpacity>
+          )}
           <TouchableOpacity
             style={[styles.zoomBtn, stepIdx === 0 && styles.zoomBtnDisabled]}
-            onPress={() => { setStepIdx((i) => Math.max(0, i - 1)); setTooltip(null); }}
+            onPress={() => { setStepIdx((i) => Math.max(0, i - 1)); setOffset(0); setTooltip(null); }}
             disabled={stepIdx === 0}
           >
             <Text style={styles.zoomBtnText}>+</Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.zoomBtn, stepIdx === AC_WINDOW_STEPS.length - 1 && styles.zoomBtnDisabled]}
-            onPress={() => { setStepIdx((i) => Math.min(AC_WINDOW_STEPS.length - 1, i + 1)); setTooltip(null); }}
+            onPress={() => { setStepIdx((i) => Math.min(AC_WINDOW_STEPS.length - 1, i + 1)); setOffset(0); setTooltip(null); }}
             disabled={stepIdx === AC_WINDOW_STEPS.length - 1}
           >
             <Text style={styles.zoomBtnText}>−</Text>
           </TouchableOpacity>
         </View>
       </View>
-      <LineChart
-        data={{
-          labels,
-          datasets: [
-            { data, strokeWidth: 2 },
-            {
-              // Mean reference line: transparent fill (low-opacity calls → transparent),
-              // visible stroke (full-opacity calls → semi-transparent white)
-              data: Array(visible.length).fill(parseFloat(mean.toFixed(2))),
-              strokeWidth: 1,
-              color: (opacity = 1) => opacity > 0.5 ? 'rgba(255,255,255,0.55)' : 'rgba(0,0,0,0)',
-              withDots: false,
-            },
-          ],
-        }}
-        width={SCREEN_W - 32}
-        height={160}
-        chartConfig={{
-          backgroundGradientFrom: colorPair[0],
-          backgroundGradientTo: colorPair[1],
-          decimalPlaces: type === 'sleep' || type === 'work' ? 1 : 0,
-          color: (opacity = 1) => `rgba(255, 255, 255, ${opacity})`,
-          labelColor: (opacity = 1) => `rgba(255, 255, 255, ${opacity})`,
-          propsForDots: { r: '4', strokeWidth: '2', stroke: '#fff' },
-        }}
-        bezier
-        style={{ borderRadius: 10 }}
-        onDataPointClick={({ x, y, value }) => {
-          // tap/click same point again to dismiss
-          setTooltip((prev) => (prev && Math.abs(prev.x - x) < 2 ? null : { x, y, value }));
-        }}
-        decorator={() => {
-          if (!tooltip) return null;
-          const val = tooltip.value;
-          const valStr = `${val % 1 === 0 ? val.toFixed(0) : val.toFixed(1)} ${unit}`;
-          // Keep tooltip inside chart bounds
-          const TW = 72;
-          const left = Math.max(4, Math.min(tooltip.x - TW / 2, SCREEN_W - 32 - TW - 4));
+      <View ref={svgWrapRef} {...pan.panHandlers} style={Platform.OS === 'web' ? { cursor: 'ew-resize' } as any : undefined}>
+      <Svg width={SVG_W} height={SVG_H} style={{ borderRadius: 10, overflow: 'hidden' }}>
+        <Defs>
+          <LinearGradient id={`bg_${type}`} x1="0" y1="0" x2="1" y2="1">
+            <Stop offset="0" stopColor={colorPair[0]} stopOpacity="1" />
+            <Stop offset="1" stopColor={colorPair[1]} stopOpacity="1" />
+          </LinearGradient>
+          <LinearGradient id={`fill_${type}`} x1="0" y1={PT} x2="0" y2={baseY} gradientUnits="userSpaceOnUse">
+            <Stop offset="0" stopColor="#fff" stopOpacity="0.30" />
+            <Stop offset="1" stopColor="#fff" stopOpacity="0.03" />
+          </LinearGradient>
+        </Defs>
+        <Rect x={0} y={0} width={SVG_W} height={SVG_H} fill={`url(#bg_${type})`} rx={10} />
+
+        {/* Y-axis grid lines and labels */}
+        {yTickVals.map((v, i) => {
+          const y = yOf(v);
           return (
-            <View
-              style={{
-                position: 'absolute',
-                left,
-                top: tooltip.y - 38,
-                backgroundColor: '#1f2937',
-                borderRadius: 6,
-                paddingHorizontal: 8,
-                paddingVertical: 5,
-                width: TW,
-                alignItems: 'center',
-              }}
-            >
-              <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>{valStr}</Text>
-            </View>
+            <G key={i}>
+              <Line x1={PL} y1={y} x2={SVG_W - PR} y2={y} stroke="rgba(255,255,255,0.18)" strokeWidth={1} />
+              <SvgText x={PL - 4} y={y + 4} fontSize={9} fill="rgba(255,255,255,0.75)" textAnchor="end">
+                {formatY(v)}
+              </SvgText>
+            </G>
           );
-        }}
-      />
+        })}
+
+        {/* Mean reference line */}
+        <Line
+          x1={PL} y1={meanY} x2={SVG_W - PR} y2={meanY}
+          stroke="rgba(255,255,255,0.55)" strokeWidth={1} strokeDasharray="4 3"
+        />
+
+        {/* Area fill + smooth stroke per contiguous segment */}
+        {segments.map((s, si) => {
+          const curve = smoothCurveD(s);
+          const areaD = curve + ` L${s[s.length - 1].x.toFixed(1)},${baseY} L${s[0].x.toFixed(1)},${baseY} Z`;
+          return (
+            <G key={si}>
+              <Path d={areaD} fill={`url(#fill_${type})`} stroke="none" />
+              <Path d={curve} stroke="rgba(255,255,255,0.9)" strokeWidth={2} fill="none" strokeLinecap="round" strokeLinejoin="round" />
+            </G>
+          );
+        })}
+
+        {/* Dots — only on days with data */}
+        {days.map((d, i) => {
+          if (d.value === null) return null;
+          const v = toChartValue(type, d.value);
+          const selected = tooltip?.idx === i;
+          return (
+            <Circle
+              key={i}
+              cx={xOf(i)} cy={yOf(v)} r={selected ? 5 : 4}
+              fill={selected ? '#fff' : 'rgba(255,255,255,0.85)'}
+              stroke="#fff" strokeWidth={selected ? 2 : 1.5}
+              onPress={() => setTooltip((prev) => (prev?.idx === i ? null : { idx: i }))}
+            />
+          );
+        })}
+
+        {/* X-axis date labels, evenly spaced by calendar position */}
+        {days.map((d, i) => {
+          if (i % labelEvery !== 0) return null;
+          const label = new Date(d.key + 'T12:00:00').toLocaleDateString(undefined, { month: 'numeric', day: 'numeric' });
+          return (
+            <SvgText key={i} x={xOf(i)} y={SVG_H - 5} fontSize={9} fill="rgba(255,255,255,0.8)" textAnchor="middle">
+              {label}
+            </SvgText>
+          );
+        })}
+
+        {/* Tooltip bubble */}
+        {tooltip !== null && tipVal !== null && (
+          <G>
+            <Rect x={tipX} y={tipY} width={TIP_W} height={22} rx={5} fill="#1f2937" />
+            <SvgText x={tipX + TIP_W / 2} y={tipY + 14} fontSize={11} fontWeight="700" fill="#fff" textAnchor="middle">
+              {`${tipVal % 1 === 0 ? tipVal.toFixed(0) : tipVal.toFixed(1)} ${unit}`}
+            </SvgText>
+          </G>
+        )}
+      </Svg>
+      </View>
     </View>
   );
 }
@@ -962,12 +1124,100 @@ function LogItem({
   );
 }
 
+// ── Dropdown ───────────────────────────────────────────────────────────────
+
+type DropdownOpt = { label: string; value: string };
+
+function PanelDropdown({
+  value,
+  options,
+  onChange,
+}: {
+  value: string;
+  options: DropdownOpt[];
+  onChange: (v: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const label = options.find((o) => o.value === value)?.label ?? value;
+
+  if (Platform.OS === 'web') {
+    return (
+      // @ts-ignore — native <select> on web
+      <select
+        value={value}
+        onChange={(e: any) => onChange(e.target.value)}
+        style={{
+          fontSize: 12, fontWeight: '500', color: '#374151',
+          backgroundColor: '#f3f4f6', border: '1px solid #e5e7eb',
+          borderRadius: 8, padding: '4px 8px', cursor: 'pointer', outline: 'none',
+        }}
+      >
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>{o.label}</option>
+        ))}
+      </select>
+    );
+  }
+
+  return (
+    <>
+      <TouchableOpacity style={dropdownStyles.trigger} onPress={() => setOpen(true)}>
+        <Text style={dropdownStyles.triggerText}>{label}</Text>
+        <Ionicons name="chevron-down" size={12} color="#6b7280" />
+      </TouchableOpacity>
+      <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
+        <TouchableOpacity style={dropdownStyles.overlay} activeOpacity={1} onPress={() => setOpen(false)}>
+          <View style={dropdownStyles.sheet}>
+            {options.map((o) => (
+              <TouchableOpacity
+                key={o.value}
+                style={[dropdownStyles.option, o.value === value && dropdownStyles.optionOn]}
+                onPress={() => { onChange(o.value); setOpen(false); }}
+              >
+                <Text style={[dropdownStyles.optionText, o.value === value && dropdownStyles.optionTextOn]}>
+                  {o.label}
+                </Text>
+                {o.value === value && <Ionicons name="checkmark" size={16} color="#6366f1" />}
+              </TouchableOpacity>
+            ))}
+          </View>
+        </TouchableOpacity>
+      </Modal>
+    </>
+  );
+}
+
+const dropdownStyles = StyleSheet.create({
+  trigger: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    backgroundColor: '#f3f4f6', borderRadius: 8, borderWidth: 1, borderColor: '#e5e7eb',
+    paddingHorizontal: 10, paddingVertical: 5,
+  },
+  triggerText: { fontSize: 12, fontWeight: '500', color: '#374151' },
+  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.3)', justifyContent: 'flex-end' },
+  sheet: {
+    backgroundColor: '#fff', borderTopLeftRadius: 16, borderTopRightRadius: 16,
+    paddingVertical: 8, paddingBottom: 24,
+  },
+  option: {
+    paddingHorizontal: 20, paddingVertical: 14,
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+  },
+  optionOn: { backgroundColor: '#eef2ff' },
+  optionText: { fontSize: 15, color: '#374151' },
+  optionTextOn: { color: '#6366f1', fontWeight: '600' },
+});
+
 // ── Screen ─────────────────────────────────────────────────────────────────
 
 const PAGE_SIZE = 10;
 
-type SortField = 'start' | 'end';
-type SortDir   = 'desc' | 'asc';
+const SORT_OPTIONS: DropdownOpt[] = [
+  { label: 'Start: newest', value: 'start_desc' },
+  { label: 'Start: oldest', value: 'start_asc' },
+  { label: 'End: newest',   value: 'end_desc' },
+  { label: 'End: oldest',   value: 'end_asc' },
+];
 
 export default function DashboardScreen() {
   const [logs, setLogs] = useState<ActivityLog[]>([]);
@@ -975,9 +1225,10 @@ export default function DashboardScreen() {
   const [visibleTypes, setVisibleTypes] = useState<Set<string>>(new Set());
   const [editingLog, setEditingLog] = useState<ActivityLog | null>(null);
   const [logPage, setLogPage] = useState(0);
-  const [logFilter, setLogFilter] = useState<string | null>(null);
-  const [logSortField, setLogSortField] = useState<SortField>('start');
-  const [logSortDir,   setLogSortDir]   = useState<SortDir>('desc');
+  const [logFilter, setLogFilter] = useState('');
+  const [logSort, setLogSort] = useState('start_desc');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo,   setDateTo]   = useState('');
 
   const fetchLogs = async () => {
     setLoading(true);
@@ -1026,19 +1277,25 @@ export default function DashboardScreen() {
   const charts = uniqueTypes.filter((t) => visibleTypes.has(t));
 
   // Filter + sort the log list independently of the charts
+  const [sortField, sortDir] = logSort.split('_') as ['start' | 'end', 'desc' | 'asc'];
   const filteredLogs = logs
-    .filter((l) => logFilter === null || l.activity_type === logFilter)
+    .filter((l) => !logFilter || l.activity_type === logFilter)
+    .filter((l) => {
+      const t = new Date(l.started_at).getTime();
+      if (dateFrom && t < new Date(dateFrom + 'T00:00:00').getTime()) return false;
+      if (dateTo   && t > new Date(dateTo   + 'T23:59:59').getTime()) return false;
+      return true;
+    })
     .sort((a, b) => {
-      if (logSortField === 'start') {
-        const diff = new Date(a.started_at).getTime() - new Date(b.started_at).getTime();
-        return logSortDir === 'desc' ? -diff : diff;
+      const sign = sortDir === 'desc' ? -1 : 1;
+      if (sortField === 'start') {
+        return sign * (new Date(a.started_at).getTime() - new Date(b.started_at).getTime());
       }
       // sort by end — entries without an end time sink to the bottom
       if (!a.ended_at && !b.ended_at) return 0;
       if (!a.ended_at) return 1;
       if (!b.ended_at) return -1;
-      const diff = new Date(a.ended_at).getTime() - new Date(b.ended_at).getTime();
-      return logSortDir === 'desc' ? -diff : diff;
+      return sign * (new Date(a.ended_at).getTime() - new Date(b.ended_at).getTime());
     });
 
   const totalPages = Math.max(1, Math.ceil(filteredLogs.length / PAGE_SIZE));
@@ -1083,97 +1340,103 @@ export default function DashboardScreen() {
               <Text style={styles.empty}>No entries yet. Tap "Log Activity" to get started.</Text>
             )}
 
-            {logs.length > 0 && (
-              <>
-                <View style={styles.logPanelHeader}>
-                  <Text style={styles.sectionLabel}>Activity Log</Text>
-                  <View style={styles.sortRow}>
-                    <Text style={styles.sortLabel}>Sort by:</Text>
-                    {(['start', 'end'] as SortField[]).map((field) => {
-                      const active = logSortField === field;
-                      const arrow = active ? (logSortDir === 'desc' ? ' ↓' : ' ↑') : '';
-                      return (
-                        <TouchableOpacity
-                          key={field}
-                          style={[styles.sortBtn, active && styles.sortBtnActive]}
-                          onPress={() => {
-                            if (active) {
-                              setLogSortDir((d) => d === 'desc' ? 'asc' : 'desc');
-                            } else {
-                              setLogSortField(field);
-                              setLogSortDir('desc');
-                            }
-                            setLogPage(0);
-                          }}
-                        >
-                          <Text style={[styles.sortBtnText, active && styles.sortBtnTextActive]}>
-                            {field === 'start' ? 'Start' : 'End'}{arrow}
-                          </Text>
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </View>
-                </View>
-
-                {/* Filter chips */}
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterScroll}>
-                  <TouchableOpacity
-                    style={[styles.filterChip, logFilter === null && styles.filterChipOn]}
-                    onPress={() => { setLogFilter(null); setLogPage(0); }}
-                  >
-                    <Text style={[styles.filterChipText, logFilter === null && styles.filterChipTextOn]}>All</Text>
-                  </TouchableOpacity>
-                  {uniqueTypes.map((type) => (
-                    <TouchableOpacity
-                      key={type}
-                      style={[styles.filterChip, logFilter === type && styles.filterChipOn]}
-                      onPress={() => { setLogFilter(logFilter === type ? null : type); setLogPage(0); }}
-                    >
-                      <Text style={[styles.filterChipText, logFilter === type && styles.filterChipTextOn]}>
-                        {type}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </ScrollView>
-
-                {/* Pagination */}
-                {filteredLogs.length > PAGE_SIZE && (
-                  <View style={[styles.logPanelHeader, { marginTop: 8 }]}>
-                    <Text style={styles.pageLabel}>
-                      {logPage * PAGE_SIZE + 1}–{Math.min((logPage + 1) * PAGE_SIZE, filteredLogs.length)} of {filteredLogs.length}
-                    </Text>
-                    <View style={styles.pagination}>
-                      <TouchableOpacity
-                        style={[styles.pageBtn, logPage === 0 && styles.pageBtnDisabled]}
-                        onPress={() => setLogPage((p) => Math.max(0, p - 1))}
-                        disabled={logPage === 0}
-                      >
-                        <Ionicons name="chevron-back" size={16} color={logPage === 0 ? '#d1d5db' : '#6366f1'} />
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        style={[styles.pageBtn, logPage >= totalPages - 1 && styles.pageBtnDisabled]}
-                        onPress={() => setLogPage((p) => Math.min(totalPages - 1, p + 1))}
-                        disabled={logPage >= totalPages - 1}
-                      >
-                        <Ionicons name="chevron-forward" size={16} color={logPage >= totalPages - 1 ? '#d1d5db' : '#6366f1'} />
-                      </TouchableOpacity>
+            {logs.length > 0 && (() => {
+              const filterOptions: DropdownOpt[] = [
+                { label: 'All types', value: '' },
+                ...uniqueTypes.map((t) => ({ label: t, value: t })),
+              ];
+              return (
+                <View style={styles.logPanel}>
+                  {/* Panel header: title + dropdowns */}
+                  <View style={styles.panelHead}>
+                    <Text style={styles.panelHeadTitle}>Activity Log</Text>
+                    <View style={styles.panelHeadControls}>
+                      <PanelDropdown
+                        value={logFilter}
+                        options={filterOptions}
+                        onChange={(v) => { setLogFilter(v); setLogPage(0); }}
+                      />
+                      <PanelDropdown
+                        value={logSort}
+                        options={SORT_OPTIONS}
+                        onChange={(v) => { setLogSort(v); setLogPage(0); }}
+                      />
                     </View>
                   </View>
-                )}
 
-                <View style={styles.logPanel}>
-                  {pagedLogs.map((item, index) => (
-                    <LogItem
-                      key={item.id}
-                      log={item}
-                      isLast={index === pagedLogs.length - 1}
-                      onDelete={() => fetchLogs()}
-                      onEdit={setEditingLog}
-                    />
-                  ))}
+                  {/* Date range row */}
+                  <View style={styles.panelDateRow}>
+                    {Platform.OS === 'web' ? (
+                      <>
+                        {/* @ts-ignore */}
+                        <input type="date" value={dateFrom} max={toLocalDateValue(new Date())}
+                          onChange={(e: any) => { setDateFrom(e.target.value); setLogPage(0); }}
+                          style={{ fontSize: 11, padding: '3px 6px', borderRadius: 6, border: '1px solid #e5e7eb', color: dateFrom ? '#374151' : '#9ca3af', backgroundColor: '#f9fafb', width: 112 }} />
+                        <Text style={styles.dateRangeSep}>–</Text>
+                        {/* @ts-ignore */}
+                        <input type="date" value={dateTo} max={toLocalDateValue(new Date())}
+                          onChange={(e: any) => { setDateTo(e.target.value); setLogPage(0); }}
+                          style={{ fontSize: 11, padding: '3px 6px', borderRadius: 6, border: '1px solid #e5e7eb', color: dateTo ? '#374151' : '#9ca3af', backgroundColor: '#f9fafb', width: 112 }} />
+                      </>
+                    ) : (
+                      <>
+                        <TextInput style={styles.dateRangeInput} placeholder="From" placeholderTextColor="#9ca3af"
+                          value={dateFrom} onChangeText={(v) => { setDateFrom(v); setLogPage(0); }} />
+                        <Text style={styles.dateRangeSep}>–</Text>
+                        <TextInput style={styles.dateRangeInput} placeholder="To" placeholderTextColor="#9ca3af"
+                          value={dateTo} onChangeText={(v) => { setDateTo(v); setLogPage(0); }} />
+                      </>
+                    )}
+                    {(dateFrom || dateTo) && (
+                      <TouchableOpacity onPress={() => { setDateFrom(''); setDateTo(''); setLogPage(0); }}
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                        <Ionicons name="close-circle" size={14} color="#9ca3af" />
+                      </TouchableOpacity>
+                    )}
+                  </View>
+
+                  {/* Log items */}
+                  {pagedLogs.length === 0 ? (
+                    <Text style={styles.panelEmpty}>No entries match your filters.</Text>
+                  ) : (
+                    pagedLogs.map((item, index) => (
+                      <LogItem
+                        key={item.id}
+                        log={item}
+                        isLast={index === pagedLogs.length - 1 && filteredLogs.length <= PAGE_SIZE}
+                        onDelete={() => fetchLogs()}
+                        onEdit={setEditingLog}
+                      />
+                    ))
+                  )}
+
+                  {/* Pagination */}
+                  {filteredLogs.length > PAGE_SIZE && (
+                    <View style={styles.panelPagination}>
+                      <Text style={styles.pageLabel}>
+                        {logPage * PAGE_SIZE + 1}–{Math.min((logPage + 1) * PAGE_SIZE, filteredLogs.length)} of {filteredLogs.length}
+                      </Text>
+                      <View style={styles.pagination}>
+                        <TouchableOpacity
+                          style={[styles.pageBtn, logPage === 0 && styles.pageBtnDisabled]}
+                          onPress={() => setLogPage((p) => Math.max(0, p - 1))}
+                          disabled={logPage === 0}
+                        >
+                          <Ionicons name="chevron-back" size={16} color={logPage === 0 ? '#d1d5db' : '#6366f1'} />
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={[styles.pageBtn, logPage >= totalPages - 1 && styles.pageBtnDisabled]}
+                          onPress={() => setLogPage((p) => Math.min(totalPages - 1, p + 1))}
+                          disabled={logPage >= totalPages - 1}
+                        >
+                          <Ionicons name="chevron-forward" size={16} color={logPage >= totalPages - 1 ? '#d1d5db' : '#6366f1'} />
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  )}
                 </View>
-              </>
-            )}
+              );
+            })()}
           </>
         }
       />
@@ -1248,10 +1511,6 @@ const styles = StyleSheet.create({
   flippedDateText: { fontSize: 8, color: '#6b7280' },
 
   // Log panel
-  logPanelHeader: {
-    flexDirection: 'row', alignItems: 'center',
-    justifyContent: 'space-between', marginBottom: 8, marginTop: 4,
-  },
   logPanel: {
     backgroundColor: '#fff',
     borderRadius: 12,
@@ -1259,7 +1518,27 @@ const styles = StyleSheet.create({
     borderColor: '#e5e7eb',
     overflow: 'hidden',
     marginBottom: 16,
+    marginTop: 4,
   },
+  panelHead: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 14, paddingVertical: 10,
+    borderBottomWidth: 1, borderBottomColor: '#f3f4f6',
+  },
+  panelHeadTitle: { fontSize: 13, fontWeight: '700', color: '#374151', textTransform: 'uppercase', letterSpacing: 0.5 },
+  panelHeadControls: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  panelDateRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    paddingHorizontal: 14, paddingVertical: 8,
+    borderBottomWidth: 1, borderBottomColor: '#f3f4f6',
+    backgroundColor: '#f9fafb',
+  },
+  panelPagination: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 14, paddingVertical: 8,
+    borderTopWidth: 1, borderTopColor: '#f3f4f6',
+  },
+  panelEmpty: { fontSize: 13, color: '#9ca3af', textAlign: 'center', paddingVertical: 24 },
   logRow: {
     borderBottomWidth: 1,
     borderBottomColor: '#f3f4f6',
@@ -1279,25 +1558,13 @@ const styles = StyleSheet.create({
   date: { fontSize: 11, color: '#9ca3af', marginTop: 1 },
   notes: { fontSize: 12, color: '#6b7280', marginTop: 2 },
 
-  // Log filter + sort
-  filterScroll: { marginBottom: 10 },
-  filterChip: {
-    paddingHorizontal: 12, paddingVertical: 5, borderRadius: 14,
-    backgroundColor: '#f3f4f6', marginRight: 6,
-    borderWidth: 1, borderColor: '#e5e7eb',
+  // Date range (inside panel)
+  dateRangeSep: { fontSize: 11, color: '#9ca3af' },
+  dateRangeInput: {
+    borderWidth: 1, borderColor: '#e5e7eb', borderRadius: 6,
+    paddingHorizontal: 6, paddingVertical: 3, fontSize: 11, color: '#374151',
+    backgroundColor: '#fff', width: 80,
   },
-  filterChipOn: { backgroundColor: '#6366f1', borderColor: '#6366f1' },
-  filterChipText: { fontSize: 12, color: '#6b7280', fontWeight: '500', textTransform: 'capitalize' },
-  filterChipTextOn: { color: '#fff', fontWeight: '700' },
-  sortRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  sortLabel: { fontSize: 12, color: '#9ca3af', fontWeight: '500' },
-  sortBtn: {
-    paddingHorizontal: 9, paddingVertical: 4, borderRadius: 12,
-    backgroundColor: '#f3f4f6', borderWidth: 1, borderColor: '#e5e7eb',
-  },
-  sortBtnActive: { backgroundColor: '#eef2ff', borderColor: '#c7d2fe' },
-  sortBtnText: { fontSize: 12, color: '#6b7280', fontWeight: '600' },
-  sortBtnTextActive: { color: '#6366f1' },
 
   // Pagination
   pagination: {
