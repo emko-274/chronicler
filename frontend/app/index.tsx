@@ -311,6 +311,7 @@ function TimelineChart({
   onEdit: (log: ActivityLog) => void;
 }) {
   const scrollRef = useRef<ScrollView>(null);
+  const chartWrapRef = useRef<View>(null);
   const [isPinching, setIsPinching] = useState(false);
   const [tooltip, setTooltip] = useState<TooltipState | null>(null);
   const [isFlipped, setIsFlipped] = useState(false);
@@ -367,11 +368,13 @@ function TimelineChart({
     }
   };
 
-  // Web: ctrl+wheel (trackpad pinch) adjusts column width
+  // Web: ctrl+wheel (trackpad pinch) adjusts column width — only when over this chart
   useEffect(() => {
     if (Platform.OS !== 'web') return;
     const handler = (e: WheelEvent) => {
       if (!e.ctrlKey) return;
+      const el = chartWrapRef.current as unknown as HTMLElement;
+      if (!el?.contains(e.target as Node)) return;
       e.preventDefault();
       const factor = e.deltaY > 0 ? 0.9 : 1.1; // pinch = narrower cols, spread = wider
       setColWidth(prev => Math.max(MIN_COL_W, Math.min(MAX_COL_W, Math.round(prev * factor))));
@@ -435,7 +438,7 @@ function TimelineChart({
   const labelEvery = colWidth < 10 ? 14 : colWidth < 20 ? 7 : 1;
 
   return (
-    <View style={styles.chartCard}>
+    <View style={styles.chartCard} ref={chartWrapRef}>
       <View style={styles.chartHeader}>
         <Text style={styles.chartTitle}>Activity Timeline</Text>
         <View style={styles.zoomRow}>
@@ -778,6 +781,11 @@ function ActivityChart({
   const xStepRef = useRef(1);
   const svgWrapRef = useRef<View>(null);
   const wheelAccum = useRef(0);
+  const zoomAccum = useRef(0);
+  const stepIdxRef = useRef(1);
+  const pinchState = useRef<{ initialDistance: number; initialStepIdx: number } | null>(null);
+
+  useEffect(() => { stepIdxRef.current = stepIdx; }, [stepIdx]);
 
   function setOffset(v: number) {
     offsetRef.current = v;
@@ -786,13 +794,42 @@ function ActivityChart({
 
   const pan = useRef(
     PanResponder.create({
+      onStartShouldSetPanResponderCapture: (evt) => evt.nativeEvent.touches.length === 2,
+      onMoveShouldSetPanResponderCapture: (evt) => evt.nativeEvent.touches.length === 2,
       onMoveShouldSetPanResponder: (_, { dx, dy }) =>
         Math.abs(dx) > 6 && Math.abs(dx) > Math.abs(dy) * 1.5,
-      onPanResponderGrant: () => { dragBase.current = offsetRef.current; },
-      onPanResponderMove: (_, { dx }) => {
-        const delta = Math.round(-dx / Math.max(xStepRef.current, 1));
-        setOffset(Math.min(365, Math.max(0, dragBase.current + delta)));
+      onPanResponderGrant: (evt) => {
+        if (evt.nativeEvent.touches.length === 2) {
+          const [t0, t1] = evt.nativeEvent.touches;
+          pinchState.current = {
+            initialDistance: Math.hypot(t1.pageX - t0.pageX, t1.pageY - t0.pageY),
+            initialStepIdx: stepIdxRef.current,
+          };
+        } else {
+          dragBase.current = offsetRef.current;
+        }
       },
+      onPanResponderMove: (evt, { dx }) => {
+        if (evt.nativeEvent.touches.length === 2 && pinchState.current) {
+          const [t0, t1] = evt.nativeEvent.touches;
+          const dist = Math.hypot(t1.pageX - t0.pageX, t1.pageY - t0.pageY);
+          const scale = dist / pinchState.current.initialDistance;
+          // spread fingers = zoom in = fewer days; pinch = zoom out = more days
+          const targetWindow = AC_WINDOW_STEPS[pinchState.current.initialStepIdx] / scale;
+          let newIdx = pinchState.current.initialStepIdx;
+          let minDiff = Infinity;
+          AC_WINDOW_STEPS.forEach((w, i) => {
+            const diff = Math.abs(w - targetWindow);
+            if (diff < minDiff) { minDiff = diff; newIdx = i; }
+          });
+          setStepIdx(newIdx);
+        } else {
+          const delta = Math.round(-dx / Math.max(xStepRef.current, 1));
+          setOffset(Math.min(365, Math.max(0, dragBase.current + delta)));
+        }
+      },
+      onPanResponderRelease: () => { pinchState.current = null; },
+      onPanResponderTerminate: () => { pinchState.current = null; },
     })
   ).current;
 
@@ -818,14 +855,23 @@ function ActivityChart({
     };
     document.addEventListener('mousedown', onDown, true); // capture phase
 
-    // Wheel / trackpad: document-level with containment check (same pattern as
-    // mousedown) so we don't depend on svgWrapRef.current being a real DOM node.
+    // Wheel: pan on plain scroll, zoom on ctrl+wheel (trackpad pinch).
     const onWheel = (e: WheelEvent) => {
       const el = svgWrapRef.current as unknown as HTMLElement;
       if (!el?.contains(e.target as Node)) return;
       e.preventDefault();
+      if (e.ctrlKey) {
+        zoomAccum.current += e.deltaY;
+        if (Math.abs(zoomAccum.current) > 25) {
+          setStepIdx(i => zoomAccum.current > 0
+            ? Math.min(AC_WINDOW_STEPS.length - 1, i + 1)
+            : Math.max(0, i - 1));
+          zoomAccum.current = 0;
+        }
+        return;
+      }
       const delta = e.deltaX !== 0 ? e.deltaX : e.deltaY;
-      wheelAccum.current += delta / 20; // fixed sensitivity: ~20px per day
+      wheelAccum.current += delta / 20;
       const days = Math.round(wheelAccum.current);
       if (days !== 0) {
         wheelAccum.current -= days;
