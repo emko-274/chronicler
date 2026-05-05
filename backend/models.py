@@ -11,6 +11,14 @@ class HiddenCategory(Base):
     name = Column(String(100), primary_key=True)
 
 
+class CategoryConfig(Base):
+    __tablename__ = "category_configs"
+
+    name = Column(String(100), primary_key=True)
+    data_type = Column(String(20), nullable=False, default='duration')  # 'duration' | 'instance' | 'quantity'
+    unit = Column(String(50), nullable=True)  # unit label for quantity type (e.g. "cups", "km")
+
+
 class ActivityLog(Base):
     __tablename__ = "activity_logs"
 

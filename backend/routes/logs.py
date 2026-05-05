@@ -41,8 +41,8 @@ class ActivityLogResponse(BaseModel):
 
 @router.post("/", response_model=ActivityLogResponse)
 def create_log(log: ActivityLogCreate, db: Session = Depends(get_db)):
-    # Auto-calculate duration if start and end are provided
-    if log.ended_at and not log.duration_minutes:
+    # Auto-calculate duration if start and end are provided and duration wasn't explicitly set
+    if log.ended_at and log.duration_minutes is None:
         delta = log.ended_at - log.started_at
         log.duration_minutes = int(delta.total_seconds() / 60)
 

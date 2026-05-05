@@ -48,7 +48,12 @@ function toLocalInputValue(date: Date): string {
   );
 }
 
-type PickerState = { target: 'start' | 'end'; mode: 'date' | 'time' } | null;
+function toLocalDateValue(date: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+type PickerState = { target: 'start' | 'end' | 'zero'; mode: 'date' | 'time' } | null;
 
 // Defined at module level so React reuses the same DOM node across re-renders.
 // If defined inside LogScreen, every render creates a new component reference,
@@ -70,11 +75,34 @@ function WebDateInput({ value, onChange }: { value: Date; onChange: (d: Date) =>
   );
 }
 
+function WebDateOnlyInput({ value, onChange }: { value: Date; onChange: (d: Date) => void }) {
+  if (Platform.OS !== 'web') return null;
+  return (
+    // @ts-ignore
+    <input
+      type="date"
+      value={toLocalDateValue(value)}
+      onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+        const d = new Date(e.target.value + 'T12:00:00');
+        if (!isNaN(d.getTime())) onChange(d);
+      }}
+      style={{
+        fontSize: 15, padding: 12, borderRadius: 8,
+        border: '1px solid #d1d5db', backgroundColor: '#fff',
+        color: '#111827', width: '100%', boxSizing: 'border-box',
+      }}
+    />
+  );
+}
+
 export default function LogScreen() {
   const [activityType, setActivityType] = useState('');
   const [typeQuery, setTypeQuery] = useState('');
   const [showDropdown, setShowDropdown] = useState(false);
   const [knownTypes, setKnownTypes] = useState<string[]>(BUILTIN_TYPES);
+
+  const [isDurationZero, setIsDurationZero] = useState(false);
+  const [zeroDate, setZeroDate] = useState(new Date());
 
   const [startDate, setStartDate] = useState(new Date());
   const [endDate, setEndDate] = useState<Date | null>(null);
@@ -126,13 +154,21 @@ export default function LogScreen() {
   // ── Native picker handlers ──────────────────────────────────────────────────
 
   const openPicker = (target: 'start' | 'end') => {
-    if (target === 'end' && !hasEnd) setEndDate(new Date());
+    if (target === 'end' && !hasEnd) setEndDate(startDate);
     setPicker({ target, mode: 'date' });
   };
 
   const onPickerChange = (event: DateTimePickerEvent, selected?: Date) => {
     if (!picker || !selected) { setPicker(null); return; }
     if (event.type === 'dismissed') { setPicker(null); return; }
+    if (picker.target === 'zero') {
+      // Keep the time at noon to avoid timezone edge cases
+      const d = new Date(selected);
+      d.setHours(12, 0, 0, 0);
+      setZeroDate(d);
+      setPicker(null);
+      return;
+    }
     if (picker.target === 'start') setStartDate(selected);
     else setEndDate(selected);
     if (Platform.OS === 'android' && picker.mode === 'date') {
@@ -147,7 +183,30 @@ export default function LogScreen() {
   const handleSave = async () => {
     if (!activityType) return Alert.alert('Please select an activity type.');
 
-    // ── Overlap check ──────────────────────────────────────────────────────
+    if (isDurationZero) {
+      // 0-min path: no overlap check, use zeroDate at noon for both start and end
+      setSaving(true);
+      try {
+        await createLog({
+          activity_type: activityType,
+          started_at: zeroDate.toISOString(),
+          ended_at: zeroDate.toISOString(),
+          notes: notes.trim() || undefined,
+        });
+        Alert.alert('Saved!', 'Your activity has been logged.');
+        setActivityType('');
+        setIsDurationZero(false);
+        setZeroDate(new Date());
+        setNotes('');
+      } catch {
+        Alert.alert('Error', 'Could not save. Is the backend running?');
+      } finally {
+        setSaving(false);
+      }
+      return;
+    }
+
+    // ── Timed path: overlap check then save ────────────────────────────────
     try {
       const existing = await getLogs(activityType, 200);
       const newEnd = hasEnd ? endDate : null;
@@ -254,44 +313,79 @@ export default function LogScreen() {
         </>
       )}
 
-      {/* ── Start time ── */}
-      <Text style={styles.label}>Start Time</Text>
-      {Platform.OS === 'web' ? (
-        <WebDateInput value={startDate} onChange={setStartDate} />
-      ) : (
-        <TouchableOpacity style={styles.dateBtn} onPress={() => openPicker('start')}>
-          <Text style={styles.dateBtnText}>{formatDateTime(startDate)}</Text>
-        </TouchableOpacity>
-      )}
-
-      {/* ── End time ── */}
-      <View style={styles.endRow}>
-        <Text style={styles.label}>End Time</Text>
-        {!hasEnd && (
-          <TouchableOpacity onPress={() => { setHasEnd(true); setEndDate(new Date()); }} style={styles.toggle}>
-            <Text style={styles.toggleText}>+ Add</Text>
+      {/* ── Timed / 0 min segmented control ── */}
+      {activityType ? (
+        <View style={styles.segmentedRow}>
+          <TouchableOpacity
+            style={[styles.segBtn, !isDurationZero && styles.segBtnOn]}
+            onPress={() => setIsDurationZero(false)}
+          >
+            <Text style={[styles.segBtnText, !isDurationZero && styles.segBtnTextOn]}>Timed</Text>
           </TouchableOpacity>
-        )}
-      </View>
-      {hasEnd && (
-        <View style={styles.endInputRow}>
+          <TouchableOpacity
+            style={[styles.segBtn, isDurationZero && styles.segBtnOn]}
+            onPress={() => setIsDurationZero(true)}
+          >
+            <Text style={[styles.segBtnText, isDurationZero && styles.segBtnTextOn]}>0 min</Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
+
+      {isDurationZero ? (
+        /* ── 0-min path: date only ── */
+        <>
+          <Text style={styles.label}>Date</Text>
           {Platform.OS === 'web' ? (
-            <WebDateInput value={endDate ?? new Date()} onChange={setEndDate} />
+            <WebDateOnlyInput value={zeroDate} onChange={setZeroDate} />
           ) : (
-            <TouchableOpacity style={[styles.dateBtn, { flex: 1 }]} onPress={() => openPicker('end')}>
+            <TouchableOpacity style={styles.dateBtn} onPress={() => setPicker({ target: 'zero', mode: 'date' })}>
               <Text style={styles.dateBtnText}>
-                {endDate ? formatDateTime(endDate) : 'Tap to set'}
+                {zeroDate.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}
               </Text>
             </TouchableOpacity>
           )}
-          <TouchableOpacity
-            onPress={() => { setHasEnd(false); setEndDate(null); }}
-            style={styles.endRemoveBtn}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          >
-            <Ionicons name="close-circle" size={20} color="#9ca3af" />
-          </TouchableOpacity>
-        </View>
+        </>
+      ) : (
+        /* ── Timed path ── */
+        <>
+          <Text style={styles.label}>Start Time</Text>
+          {Platform.OS === 'web' ? (
+            <WebDateInput value={startDate} onChange={setStartDate} />
+          ) : (
+            <TouchableOpacity style={styles.dateBtn} onPress={() => openPicker('start')}>
+              <Text style={styles.dateBtnText}>{formatDateTime(startDate)}</Text>
+            </TouchableOpacity>
+          )}
+
+          <View style={styles.endRow}>
+            <Text style={styles.label}>End Time</Text>
+            {!hasEnd && (
+              <TouchableOpacity onPress={() => { setHasEnd(true); setEndDate(startDate); }} style={styles.toggle}>
+                <Text style={styles.toggleText}>+ Add</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+          {hasEnd && (
+            <View style={styles.endInputRow}>
+              {Platform.OS === 'web' ? (
+                <WebDateInput value={endDate ?? new Date()} onChange={setEndDate} />
+              ) : (
+                <TouchableOpacity style={[styles.dateBtn, { flex: 1 }]} onPress={() => openPicker('end')}>
+                  <Text style={styles.dateBtnText}>
+                    {endDate ? formatDateTime(endDate) : 'Tap to set'}
+                  </Text>
+                </TouchableOpacity>
+              )}
+              <TouchableOpacity
+                onPress={() => { setHasEnd(false); setEndDate(null); }}
+                style={styles.endRemoveBtn}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                <Ionicons name="close-circle" size={20} color="#9ca3af" />
+              </TouchableOpacity>
+            </View>
+          )}
+        </>
       )}
 
       {/* ── Notes ── */}
@@ -310,7 +404,7 @@ export default function LogScreen() {
 
       {picker && Platform.OS !== 'web' && (
         <DateTimePicker
-          value={picker.target === 'start' ? startDate : (endDate ?? new Date())}
+          value={picker.target === 'zero' ? zeroDate : picker.target === 'start' ? startDate : (endDate ?? new Date())}
           mode={picker.mode}
           display={Platform.OS === 'ios' ? 'inline' : 'default'}
           onChange={onPickerChange}
@@ -378,4 +472,14 @@ const styles = StyleSheet.create({
   toggleText: { fontSize: 13, color: '#6366f1', fontWeight: '600' },
   saveBtn: { backgroundColor: '#6366f1', padding: 16, borderRadius: 10, alignItems: 'center', marginTop: 28 },
   saveBtnText: { color: '#fff', fontSize: 16, fontWeight: '700' },
+
+  // Timed / 0 min segmented control
+  segmentedRow: {
+    flexDirection: 'row', marginTop: 20, marginBottom: 4,
+    backgroundColor: '#e5e7eb', borderRadius: 10, padding: 3,
+  },
+  segBtn: { flex: 1, paddingVertical: 8, borderRadius: 8, alignItems: 'center' },
+  segBtnOn: { backgroundColor: '#fff', shadowColor: '#000', shadowOpacity: 0.08, shadowRadius: 2, elevation: 1 },
+  segBtnText: { fontSize: 14, fontWeight: '600', color: '#9ca3af' },
+  segBtnTextOn: { color: '#111827' },
 });

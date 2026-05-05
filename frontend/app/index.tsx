@@ -39,20 +39,22 @@ const TYPE_COLORS = [
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 function formatDuration(minutes: number | null): string {
-  if (!minutes) return '—';
+  if (minutes === null || minutes === undefined) return '—';
   const h = Math.floor(minutes / 60);
   const m = minutes % 60;
   return h > 0 ? `${h}h ${m}m` : `${m}m`;
 }
 
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString(undefined, {
-    weekday: 'short',
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
+function formatTimeRange(startIso: string, endIso: string | null): string {
+  const start = new Date(startIso);
+  const dateStr = start.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+  const startTime = start.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  if (!endIso) return `${dateStr} · ${startTime}`;
+  const end = new Date(endIso);
+  const endTime = end.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  if (dayKey(start) === dayKey(end)) return `${dateStr} · ${startTime} – ${endTime}`;
+  const endDateStr = end.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+  return `${dateStr} ${startTime} – ${endDateStr} ${endTime}`;
 }
 
 function shortDate(iso: string): string {
@@ -273,7 +275,8 @@ const DEFAULT_HISTORY = 90;
 const EXTEND_BY = 60;
 
 function dayKey(date: Date): string {
-  return date.toISOString().slice(0, 10);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
 interface TooltipState {
@@ -285,6 +288,7 @@ interface TooltipState {
 
 const TOOLTIP_W = 152;
 const TOOLTIP_PAD = 8;
+const FLIPPED_ROW_H = 24; // height of each date row in flipped mode
 
 function TimelineChart({
   logs,
@@ -300,6 +304,12 @@ function TimelineChart({
   const scrollRef = useRef<ScrollView>(null);
   const [isPinching, setIsPinching] = useState(false);
   const [tooltip, setTooltip] = useState<TooltipState | null>(null);
+  const [isFlipped, setIsFlipped] = useState(false);
+  const isFlippedRef = useRef(false);
+  useEffect(() => { isFlippedRef.current = isFlipped; }, [isFlipped]);
+  // Width of the time-of-day axis in flipped mode (measured on layout)
+  const [flippedW, setFlippedW] = useState(SCREEN_W - 94);
+  const scrollYRef = useRef(0);
 
   // colWidth = zoom level (wider = more detail, fewer days on screen)
   const [colWidth, setColWidth] = useState(DEFAULT_COL_W);
@@ -329,6 +339,14 @@ function TimelineChart({
       isExtending.current = false;
     }
   }, [numDays]);
+
+  // Reset scroll and tooltip when switching between normal / flipped view
+  useEffect(() => {
+    setTooltip(null);
+    scrollXRef.current = 0;
+    scrollYRef.current = 0;
+    setTimeout(() => scrollRef.current?.scrollToEnd({ animated: false }), 50);
+  }, [isFlipped]);
 
   const handleScroll = (e: any) => {
     scrollXRef.current = e.nativeEvent.contentOffset.x;
@@ -392,12 +410,16 @@ function TimelineChart({
     days.push(dayKey(d));
   }
 
-  // Group logs by start day
+  // Group logs by start day; multi-day entries also appear on their end day
   const byDay = new Map<string, ActivityLog[]>();
   days.forEach((d) => byDay.set(d, []));
   logs.forEach((l) => {
-    const k = dayKey(new Date(l.started_at));
-    if (byDay.has(k)) byDay.get(k)!.push(l);
+    const startKey = dayKey(new Date(l.started_at));
+    if (byDay.has(startKey)) byDay.get(startKey)!.push(l);
+    if (l.ended_at) {
+      const endKey = dayKey(new Date(l.ended_at));
+      if (endKey !== startKey && byDay.has(endKey)) byDay.get(endKey)!.push(l);
+    }
   });
 
   // Sparse date labels so text doesn't overlap at small column widths
@@ -408,176 +430,301 @@ function TimelineChart({
       <View style={styles.chartHeader}>
         <Text style={styles.chartTitle}>Activity Timeline</Text>
         <View style={styles.zoomRow}>
-          <TouchableOpacity style={styles.zoomBtn}
-            onPress={() => setColWidth(w => Math.min(MAX_COL_W, Math.round(w * 1.4)))}>
-            <Text style={styles.zoomBtnText}>+</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.zoomBtn}
-            onPress={() => setColWidth(w => Math.max(MIN_COL_W, Math.round(w * 0.7)))}>
-            <Text style={styles.zoomBtnText}>−</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={[styles.zoomBtn, styles.zoomBtnToday]}
-            onPress={() => scrollRef.current?.scrollToEnd({ animated: true })}>
-            <Text style={[styles.zoomBtnText, styles.zoomBtnTodayText]}>Today</Text>
+          {!isFlipped && (
+            <>
+              <TouchableOpacity style={styles.zoomBtn}
+                onPress={() => setColWidth(w => Math.min(MAX_COL_W, Math.round(w * 1.4)))}>
+                <Text style={styles.zoomBtnText}>+</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.zoomBtn}
+                onPress={() => setColWidth(w => Math.max(MIN_COL_W, Math.round(w * 0.7)))}>
+                <Text style={styles.zoomBtnText}>−</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.zoomBtn, styles.zoomBtnToday]}
+                onPress={() => scrollRef.current?.scrollToEnd({ animated: true })}>
+                <Text style={[styles.zoomBtnText, styles.zoomBtnTodayText]}>Today</Text>
+              </TouchableOpacity>
+            </>
+          )}
+          {isFlipped && (
+            <TouchableOpacity style={[styles.zoomBtn, styles.zoomBtnToday]}
+              onPress={() => scrollRef.current?.scrollToEnd({ animated: true })}>
+              <Text style={[styles.zoomBtnText, styles.zoomBtnTodayText]}>Today</Text>
+            </TouchableOpacity>
+          )}
+          <TouchableOpacity
+            style={[styles.zoomBtn, styles.zoomBtnFlip, isFlipped && styles.zoomBtnFlipOn]}
+            onPress={() => setIsFlipped(f => !f)}
+          >
+            <Ionicons name={isFlipped ? 'swap-horizontal' : 'swap-vertical'} size={13} color={isFlipped ? '#fff' : '#6366f1'} />
           </TouchableOpacity>
         </View>
       </View>
 
-      <View
-        style={{ flexDirection: 'row' }}
-        {...(Platform.OS !== 'web' ? panResponder.panHandlers : {})}
-      >
-        {/* Pinned time-of-day axis */}
-        <Svg width={TIME_LABEL_W} height={svgH}>
-          {HOUR_TICKS.map((h) => {
-            const y = (h / 24) * CHART_H;
-            const label = h === 0 ? '12am' : h === 12 ? '12pm' : h === 24 ? '' : `${h > 12 ? h - 12 : h}${h >= 12 ? 'pm' : 'am'}`;
-            return (
-              <SvgText key={h} x={TIME_LABEL_W - 4} y={y + 4} fontSize={9} fill="#9ca3af" textAnchor="end">
-                {label}
-              </SvgText>
-            );
-          })}
-        </Svg>
-
-        <ScrollView
-          ref={scrollRef}
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          scrollEnabled={!isPinching}
-          onScroll={handleScroll}
-          scrollEventThrottle={100}
-          style={{ flex: 1 }}
+      {isFlipped ? (
+        // ── Flipped: dates = rows (Y), time-of-day = columns (X) ─────────────
+        <View
+          onLayout={e => setFlippedW(e.nativeEvent.layout.width - TIME_LABEL_W)}
         >
-          <Svg width={totalChartW} height={svgH}>
-            {days.map((day, colIdx) => (
-              <Rect key={day + '-bg'} x={colIdx * colWidth} y={0} width={colWidth} height={CHART_H}
-                fill={colIdx % 2 === 0 ? '#f9fafb' : '#f3f4f6'} />
-            ))}
+          {/* Pinned time-of-day header */}
+          <View style={{ flexDirection: 'row' }}>
+            <View style={{ width: TIME_LABEL_W }} />
+            <Svg width={flippedW} height={DATE_LABEL_H}>
+              {HOUR_TICKS.filter(h => h < 24).map(h => {
+                const x = (h / 24) * flippedW;
+                const label = h === 0 ? '12am' : h === 12 ? '12pm' : `${h > 12 ? h - 12 : h}${h >= 12 ? 'pm' : 'am'}`;
+                return (
+                  <SvgText key={h} x={x} y={DATE_LABEL_H - 6} fontSize={9} fill="#9ca3af" textAnchor="middle">
+                    {label}
+                  </SvgText>
+                );
+              })}
+              <Line x1={0} y1={DATE_LABEL_H - 1} x2={flippedW} y2={DATE_LABEL_H - 1} stroke="#d1d5db" strokeWidth={1} />
+            </Svg>
+          </View>
 
-            {HOUR_TICKS.map((h) => {
-              const y = (h / 24) * CHART_H;
-              return (
-                <Line key={h} x1={0} y1={y} x2={totalChartW} y2={y}
-                  stroke="#d1d5db" strokeWidth={h === 0 ? 1 : 0.5}
-                  strokeDasharray={h === 0 ? undefined : '3,3'} />
-              );
-            })}
-
-            {days.map((day, colIdx) => {
-              const colX = colIdx * colWidth;
+          {/* Scrollable date rows — today at the bottom */}
+          <ScrollView ref={scrollRef} style={{ maxHeight: CHART_H }} showsVerticalScrollIndicator={false}>
+            {days.map((day, rowIdx) => {
               const entries = (byDay.get(day) ?? []).filter(l => visibleTypes.has(l.activity_type));
               const d = new Date(day + 'T12:00:00');
-              const showLabel = colIdx % labelEvery === 0;
-              const barW = Math.max(1, colWidth - BAR_PADDING * 2);
-
               return (
-                <G key={day}>
-                  {showLabel && (
-                    <>
-                      <SvgText x={colX + colWidth / 2} y={CHART_H + 12} fontSize={9} fill="#6b7280" textAnchor="middle">
-                        {d.toLocaleDateString(undefined, { weekday: 'short' })}
-                      </SvgText>
-                      <SvgText x={colX + colWidth / 2} y={CHART_H + 23} fontSize={8} fill="#9ca3af" textAnchor="middle">
-                        {d.toLocaleDateString(undefined, { month: 'numeric', day: 'numeric' })}
-                      </SvgText>
-                    </>
-                  )}
-                  {entries.map((log) => {
-                    const start = new Date(log.started_at);
-                    const startFrac = (start.getHours() * 60 + start.getMinutes()) / (24 * 60);
-                    const barY = startFrac * CHART_H;
-                    const color = colorMap.get(log.activity_type)?.[0] ?? '#6366f1';
-                    const barX = colX + BAR_PADDING;
-                    const isHovered = tooltip?.log.id === log.id;
-
-                    const showTip = () => {
+                <View key={day} style={{ flexDirection: 'row', height: FLIPPED_ROW_H }}>
+                  {/* Date label */}
+                  <View style={styles.flippedDateLabel}>
+                    <Text style={styles.flippedDateText}>
+                      {d.toLocaleDateString(undefined, { month: 'numeric', day: 'numeric' })}
+                    </Text>
+                  </View>
+                  {/* Activity bar row */}
+                  <Svg width={flippedW} height={FLIPPED_ROW_H}>
+                    <Rect x={0} y={0} width={flippedW} height={FLIPPED_ROW_H}
+                      fill={rowIdx % 2 === 0 ? '#f9fafb' : '#f3f4f6'} />
+                    {HOUR_TICKS.map(h => {
+                      const x = (h / 24) * flippedW;
+                      return (
+                        <Line key={h} x1={x} y1={0} x2={x} y2={FLIPPED_ROW_H}
+                          stroke="#d1d5db" strokeWidth={h === 0 || h === 24 ? 1 : 0.5}
+                          strokeDasharray={h === 0 || h === 24 ? undefined : '3,3'} />
+                      );
+                    })}
+                    {entries.map(log => {
+                      const start = new Date(log.started_at);
+                      const logStartDay = dayKey(start);
+                      const isContinuation = logStartDay !== day;
+                      const startFrac = isContinuation
+                        ? 0
+                        : (start.getHours() * 60 + start.getMinutes()) / (24 * 60);
+                      const barX = startFrac * flippedW;
+                      const color = colorMap.get(log.activity_type)?.[0] ?? '#6366f1';
+                      const interactionProps = Platform.OS === 'web'
+                        ? { onClick: () => onEdit(log) }
+                        : { onPress: () => onEdit(log) };
                       if (log.ended_at) {
                         const end = new Date(log.ended_at);
-                        const endFrac = Math.min((end.getHours() * 60 + end.getMinutes()) / (24 * 60), 1);
-                        const barH = Math.max((endFrac - startFrac) * CHART_H, 3);
-                        setTooltip({ log, barX, barY, barH });
-                      } else {
-                        setTooltip({ log, barX, barY, barH: 6 });
-                      }
-                    };
-                    const hideTip = () => setTooltip(null);
-                    const toggleTip = () => isHovered ? hideTip() : showTip();
-                    // Mouse events (web only) — passing these to native SVG elements causes freezes
-                    const interactionProps = Platform.OS === 'web'
-                      ? { onMouseEnter: showTip, onMouseLeave: hideTip, onClick: () => onEdit(log) }
-                      : { onPressIn: showTip, onPressOut: hideTip, onPress: () => onEdit(log) };
-
-                    if (log.ended_at) {
-                      const end = new Date(log.ended_at);
-                      const endFrac = Math.min((end.getHours() * 60 + end.getMinutes()) / (24 * 60), 1);
-                      const barH = Math.max((endFrac - startFrac) * CHART_H, 3);
-                      return (
-                        <G key={log.id}>
-                          <Rect
-                            x={barX} y={barY} width={barW} height={barH}
-                            fill={color} rx={2} opacity={isHovered ? 1 : 0.85}
-                            // @ts-ignore — onMouseEnter/Leave valid on web SVG
-                            {...interactionProps}
-                          />
-                        </G>
-                      );
-                    } else {
-                      const r = Math.min(3, barW / 2);
-                      return (
-                        <G key={log.id}>
-                          <Circle
-                            cx={barX + barW / 2} cy={barY} r={r}
-                            fill={color} opacity={isHovered ? 1 : 0.85}
+                        const endsToday = dayKey(end) === day;
+                        const endFrac = endsToday
+                          ? (end.getHours() * 60 + end.getMinutes()) / (24 * 60)
+                          : 1.0;
+                        const barW = Math.max((endFrac - startFrac) * flippedW, 3);
+                        return (
+                          <Rect key={log.id + (isContinuation ? '-cont' : '')}
+                            x={barX} y={BAR_PADDING} width={barW} height={FLIPPED_ROW_H - BAR_PADDING * 2}
+                            fill={color} rx={2} opacity={0.85}
                             // @ts-ignore
                             {...interactionProps}
                           />
-                        </G>
-                      );
-                    }
-                  })}
-                </G>
+                        );
+                      } else {
+                        const r = Math.min(3, (FLIPPED_ROW_H - BAR_PADDING * 2) / 2);
+                        return (
+                          <Circle key={log.id}
+                            cx={barX} cy={FLIPPED_ROW_H / 2} r={r}
+                            fill={color} opacity={0.85}
+                            // @ts-ignore
+                            {...interactionProps}
+                          />
+                        );
+                      }
+                    })}
+                    <Line x1={0} y1={FLIPPED_ROW_H - 1} x2={flippedW} y2={FLIPPED_ROW_H - 1}
+                      stroke="#e5e7eb" strokeWidth={0.5} />
+                  </Svg>
+                </View>
               );
             })}
-
-            <Line x1={totalChartW} y1={0} x2={totalChartW} y2={CHART_H} stroke="#d1d5db" strokeWidth={1} />
-            <Line x1={0} y1={CHART_H} x2={totalChartW} y2={CHART_H} stroke="#d1d5db" strokeWidth={1} />
-
-            {/* Tooltip — rendered last so it appears on top */}
-            {tooltip && (() => {
-              const timeStr = new Date(tooltip.log.started_at).toLocaleString(undefined, {
-                month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
-              });
-              const dur = tooltip.log.duration_minutes
-                ? formatDuration(tooltip.log.duration_minutes) : null;
-              const noteSnippet = tooltip.log.notes
-                ? (tooltip.log.notes.length > 22 ? tooltip.log.notes.slice(0, 22) + '…' : tooltip.log.notes)
-                : null;
-              const lines = [timeStr, dur, noteSnippet].filter(Boolean) as string[];
-              const tipH = 18 + lines.length * 13 + 8;
-              const tx = Math.max(0, Math.min(tooltip.barX, totalChartW - TOOLTIP_W));
-              const spaceAbove = tooltip.barY >= tipH + TOOLTIP_PAD;
-              const ty = spaceAbove
-                ? tooltip.barY - tipH - TOOLTIP_PAD
-                : tooltip.barY + tooltip.barH + TOOLTIP_PAD;
+          </ScrollView>
+        </View>
+      ) : (
+        // ── Normal: dates = columns (X), time-of-day = rows (Y) ──────────────
+        <View
+          style={{ flexDirection: 'row' }}
+          {...(Platform.OS !== 'web' ? panResponder.panHandlers : {})}
+        >
+          {/* Pinned time-of-day axis */}
+          <Svg width={TIME_LABEL_W} height={svgH}>
+            {HOUR_TICKS.map((h) => {
+              const y = (h / 24) * CHART_H;
+              const label = h === 0 ? '12am' : h === 12 ? '12pm' : h === 24 ? '' : `${h > 12 ? h - 12 : h}${h >= 12 ? 'pm' : 'am'}`;
               return (
-                <G key="tooltip">
-                  <Rect x={tx} y={ty} width={TOOLTIP_W} height={tipH}
-                    fill="white" stroke="#d1d5db" strokeWidth={1} rx={6} />
-                  <SvgText x={tx + 10} y={ty + 14} fontSize={11} fontWeight="bold" fill="#111827">
-                    {tooltip.log.activity_type.charAt(0).toUpperCase() + tooltip.log.activity_type.slice(1)}
-                  </SvgText>
-                  {lines.map((line, i) => (
-                    <SvgText key={i} x={tx + 10} y={ty + 26 + i * 13} fontSize={9} fill="#6b7280">
-                      {line}
-                    </SvgText>
-                  ))}
-                </G>
+                <SvgText key={h} x={TIME_LABEL_W - 4} y={y + 4} fontSize={9} fill="#9ca3af" textAnchor="end">
+                  {label}
+                </SvgText>
               );
-            })()}
+            })}
           </Svg>
-        </ScrollView>
-      </View>
+
+          <ScrollView
+            ref={scrollRef}
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            scrollEnabled={!isPinching}
+            onScroll={handleScroll}
+            scrollEventThrottle={100}
+            style={{ flex: 1 }}
+          >
+            <Svg width={totalChartW} height={svgH}>
+              {days.map((day, colIdx) => (
+                <Rect key={day + '-bg'} x={colIdx * colWidth} y={0} width={colWidth} height={CHART_H}
+                  fill={colIdx % 2 === 0 ? '#f9fafb' : '#f3f4f6'} />
+              ))}
+
+              {HOUR_TICKS.map((h) => {
+                const y = (h / 24) * CHART_H;
+                return (
+                  <Line key={h} x1={0} y1={y} x2={totalChartW} y2={y}
+                    stroke="#d1d5db" strokeWidth={h === 0 ? 1 : 0.5}
+                    strokeDasharray={h === 0 ? undefined : '3,3'} />
+                );
+              })}
+
+              {days.map((day, colIdx) => {
+                const colX = colIdx * colWidth;
+                const entries = (byDay.get(day) ?? []).filter(l => visibleTypes.has(l.activity_type));
+                const d = new Date(day + 'T12:00:00');
+                const showLabel = colIdx % labelEvery === 0;
+                const barW = Math.max(1, colWidth - BAR_PADDING * 2);
+
+                return (
+                  <G key={day}>
+                    {showLabel && (
+                      <>
+                        <SvgText x={colX + colWidth / 2} y={CHART_H + 12} fontSize={9} fill="#6b7280" textAnchor="middle">
+                          {d.toLocaleDateString(undefined, { weekday: 'short' })}
+                        </SvgText>
+                        <SvgText x={colX + colWidth / 2} y={CHART_H + 23} fontSize={8} fill="#9ca3af" textAnchor="middle">
+                          {d.toLocaleDateString(undefined, { month: 'numeric', day: 'numeric' })}
+                        </SvgText>
+                      </>
+                    )}
+                    {entries.map((log) => {
+                      const start = new Date(log.started_at);
+                      const logStartDay = dayKey(start);
+                      // This column may be rendering the entry's start day or its end day (continuation)
+                      const isContinuation = logStartDay !== day;
+                      const startFrac = isContinuation
+                        ? 0
+                        : (start.getHours() * 60 + start.getMinutes()) / (24 * 60);
+                      const barY = startFrac * CHART_H;
+                      const color = colorMap.get(log.activity_type)?.[0] ?? '#6366f1';
+                      const barX = colX + BAR_PADDING;
+                      const isHovered = tooltip?.log.id === log.id;
+
+                      const showTip = () => {
+                        if (log.ended_at) {
+                          const end = new Date(log.ended_at);
+                          const endsToday = dayKey(end) === day;
+                          const endFrac = endsToday
+                            ? (end.getHours() * 60 + end.getMinutes()) / (24 * 60)
+                            : 1.0;
+                          const barH = Math.max((endFrac - startFrac) * CHART_H, 3);
+                          setTooltip({ log, barX, barY, barH });
+                        } else {
+                          setTooltip({ log, barX, barY, barH: 6 });
+                        }
+                      };
+                      const hideTip = () => setTooltip(null);
+                      const toggleTip = () => isHovered ? hideTip() : showTip();
+                      // Mouse events (web only) — passing these to native SVG elements causes freezes
+                      const interactionProps = Platform.OS === 'web'
+                        ? { onMouseEnter: showTip, onMouseLeave: hideTip, onClick: () => onEdit(log) }
+                        : { onPressIn: showTip, onPressOut: hideTip, onPress: () => onEdit(log) };
+
+                      if (log.ended_at) {
+                        const end = new Date(log.ended_at);
+                        // If this entry ends on a different day, clip bar to bottom of this column
+                        const endsToday = dayKey(end) === day;
+                        const endFrac = endsToday
+                          ? (end.getHours() * 60 + end.getMinutes()) / (24 * 60)
+                          : 1.0;
+                        const barH = Math.max((endFrac - startFrac) * CHART_H, 3);
+                        return (
+                          <G key={log.id + (isContinuation ? '-cont' : '')}>
+                            <Rect
+                              x={barX} y={barY} width={barW} height={barH}
+                              fill={color} rx={2} opacity={isHovered ? 1 : 0.85}
+                              // @ts-ignore — onMouseEnter/Leave valid on web SVG
+                              {...interactionProps}
+                            />
+                          </G>
+                        );
+                      } else {
+                        const r = Math.min(3, barW / 2);
+                        return (
+                          <G key={log.id}>
+                            <Circle
+                              cx={barX + barW / 2} cy={barY} r={r}
+                              fill={color} opacity={isHovered ? 1 : 0.85}
+                              // @ts-ignore
+                              {...interactionProps}
+                            />
+                          </G>
+                        );
+                      }
+                    })}
+                  </G>
+                );
+              })}
+
+              <Line x1={totalChartW} y1={0} x2={totalChartW} y2={CHART_H} stroke="#d1d5db" strokeWidth={1} />
+              <Line x1={0} y1={CHART_H} x2={totalChartW} y2={CHART_H} stroke="#d1d5db" strokeWidth={1} />
+
+              {/* Tooltip — rendered last so it appears on top */}
+              {tooltip && (() => {
+                const timeStr = new Date(tooltip.log.started_at).toLocaleString(undefined, {
+                  month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+                });
+                const dur = tooltip.log.duration_minutes
+                  ? formatDuration(tooltip.log.duration_minutes) : null;
+                const noteSnippet = tooltip.log.notes
+                  ? (tooltip.log.notes.length > 22 ? tooltip.log.notes.slice(0, 22) + '…' : tooltip.log.notes)
+                  : null;
+                const lines = [timeStr, dur, noteSnippet].filter(Boolean) as string[];
+                const tipH = 18 + lines.length * 13 + 8;
+                const tx = Math.max(0, Math.min(tooltip.barX, totalChartW - TOOLTIP_W));
+                const spaceAbove = tooltip.barY >= tipH + TOOLTIP_PAD;
+                const ty = spaceAbove
+                  ? tooltip.barY - tipH - TOOLTIP_PAD
+                  : tooltip.barY + tooltip.barH + TOOLTIP_PAD;
+                return (
+                  <G key="tooltip">
+                    <Rect x={tx} y={ty} width={TOOLTIP_W} height={tipH}
+                      fill="white" stroke="#d1d5db" strokeWidth={1} rx={6} />
+                    <SvgText x={tx + 10} y={ty + 14} fontSize={11} fontWeight="bold" fill="#111827">
+                      {tooltip.log.activity_type.charAt(0).toUpperCase() + tooltip.log.activity_type.slice(1)}
+                    </SvgText>
+                    {lines.map((line, i) => (
+                      <SvgText key={i} x={tx + 10} y={ty + 26 + i * 13} fontSize={9} fill="#6b7280">
+                        {line}
+                      </SvgText>
+                    ))}
+                  </G>
+                );
+              })()}
+            </Svg>
+          </ScrollView>
+        </View>
+      )}
     </View>
   );
 }
@@ -596,6 +743,7 @@ function ActivityChart({
   colorPair: string[];
 }) {
   const [stepIdx, setStepIdx] = useState(1); // default: 14 days
+  const [tooltip, setTooltip] = useState<{ x: number; y: number; value: number } | null>(null);
 
   // Aggregate duration by calendar date
   const byDate = new Map<string, number>();
@@ -608,8 +756,8 @@ function ActivityChart({
 
   // Sort ascending, then take the last N days
   const allDays = [...byDate.entries()].sort(([a], [b]) => a.localeCompare(b));
-  const window = AC_WINDOW_STEPS[stepIdx];
-  const visible = allDays.slice(-window);
+  const windowSize = AC_WINDOW_STEPS[stepIdx];
+  const visible = allDays.slice(-windowSize);
 
   if (visible.length < 2) {
     return (
@@ -631,24 +779,29 @@ function ActivityChart({
   );
   const data = visible.map(([, mins]) => toChartValue(type, mins));
   const unit = chartUnit(type);
+  const mean = data.reduce((s, v) => s + v, 0) / data.length;
+  const meanStr = `${mean % 1 === 0 ? mean.toFixed(0) : mean.toFixed(1)} ${unit}`;
 
   return (
     <View style={styles.chartCard}>
       <View style={styles.chartHeader}>
-        <Text style={styles.chartTitle}>
-          {type.charAt(0).toUpperCase() + type.slice(1)} — last {visible.length} days ({unit})
-        </Text>
+        <View>
+          <Text style={styles.chartTitle}>
+            {type.charAt(0).toUpperCase() + type.slice(1)} — last {visible.length} days
+          </Text>
+          <Text style={styles.chartMean}>avg {meanStr}</Text>
+        </View>
         <View style={styles.zoomRow}>
           <TouchableOpacity
             style={[styles.zoomBtn, stepIdx === 0 && styles.zoomBtnDisabled]}
-            onPress={() => setStepIdx((i) => Math.max(0, i - 1))}
+            onPress={() => { setStepIdx((i) => Math.max(0, i - 1)); setTooltip(null); }}
             disabled={stepIdx === 0}
           >
             <Text style={styles.zoomBtnText}>+</Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.zoomBtn, stepIdx === AC_WINDOW_STEPS.length - 1 && styles.zoomBtnDisabled]}
-            onPress={() => setStepIdx((i) => Math.min(AC_WINDOW_STEPS.length - 1, i + 1))}
+            onPress={() => { setStepIdx((i) => Math.min(AC_WINDOW_STEPS.length - 1, i + 1)); setTooltip(null); }}
             disabled={stepIdx === AC_WINDOW_STEPS.length - 1}
           >
             <Text style={styles.zoomBtnText}>−</Text>
@@ -656,7 +809,20 @@ function ActivityChart({
         </View>
       </View>
       <LineChart
-        data={{ labels, datasets: [{ data, strokeWidth: 2 }] }}
+        data={{
+          labels,
+          datasets: [
+            { data, strokeWidth: 2 },
+            {
+              // Mean reference line: transparent fill (low-opacity calls → transparent),
+              // visible stroke (full-opacity calls → semi-transparent white)
+              data: Array(visible.length).fill(parseFloat(mean.toFixed(2))),
+              strokeWidth: 1,
+              color: (opacity = 1) => opacity > 0.5 ? 'rgba(255,255,255,0.55)' : 'rgba(0,0,0,0)',
+              withDots: false,
+            },
+          ],
+        }}
         width={SCREEN_W - 32}
         height={160}
         chartConfig={{
@@ -669,7 +835,35 @@ function ActivityChart({
         }}
         bezier
         style={{ borderRadius: 10 }}
-        withInnerLines={false}
+        onDataPointClick={({ x, y, value }) => {
+          // tap/click same point again to dismiss
+          setTooltip((prev) => (prev && Math.abs(prev.x - x) < 2 ? null : { x, y, value }));
+        }}
+        decorator={() => {
+          if (!tooltip) return null;
+          const val = tooltip.value;
+          const valStr = `${val % 1 === 0 ? val.toFixed(0) : val.toFixed(1)} ${unit}`;
+          // Keep tooltip inside chart bounds
+          const TW = 72;
+          const left = Math.max(4, Math.min(tooltip.x - TW / 2, SCREEN_W - 32 - TW - 4));
+          return (
+            <View
+              style={{
+                position: 'absolute',
+                left,
+                top: tooltip.y - 38,
+                backgroundColor: '#1f2937',
+                borderRadius: 6,
+                paddingHorizontal: 8,
+                paddingVertical: 5,
+                width: TW,
+                alignItems: 'center',
+              }}
+            >
+              <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>{valStr}</Text>
+            </View>
+          );
+        }}
       />
     </View>
   );
@@ -752,7 +946,7 @@ function LogItem({
       <View style={styles.logRowMain}>
         <View style={styles.logRowLeft}>
           <Text style={styles.activityType}>{log.activity_type}</Text>
-          <Text style={styles.date}>{formatDate(log.started_at)}</Text>
+          <Text style={styles.date}>{formatTimeRange(log.started_at, log.ended_at)}</Text>
           {log.notes ? (
             <Text style={styles.notes} numberOfLines={1}>{log.notes}</Text>
           ) : null}
@@ -772,12 +966,18 @@ function LogItem({
 
 const PAGE_SIZE = 10;
 
+type SortField = 'start' | 'end';
+type SortDir   = 'desc' | 'asc';
+
 export default function DashboardScreen() {
   const [logs, setLogs] = useState<ActivityLog[]>([]);
   const [loading, setLoading] = useState(true);
   const [visibleTypes, setVisibleTypes] = useState<Set<string>>(new Set());
   const [editingLog, setEditingLog] = useState<ActivityLog | null>(null);
   const [logPage, setLogPage] = useState(0);
+  const [logFilter, setLogFilter] = useState<string | null>(null);
+  const [logSortField, setLogSortField] = useState<SortField>('start');
+  const [logSortDir,   setLogSortDir]   = useState<SortDir>('desc');
 
   const fetchLogs = async () => {
     setLoading(true);
@@ -824,8 +1024,25 @@ export default function DashboardScreen() {
   if (loading) return <ActivityIndicator style={styles.centered} size="large" color="#6366f1" />;
 
   const charts = uniqueTypes.filter((t) => visibleTypes.has(t));
-  const totalPages = Math.max(1, Math.ceil(logs.length / PAGE_SIZE));
-  const pagedLogs = logs.slice(logPage * PAGE_SIZE, (logPage + 1) * PAGE_SIZE);
+
+  // Filter + sort the log list independently of the charts
+  const filteredLogs = logs
+    .filter((l) => logFilter === null || l.activity_type === logFilter)
+    .sort((a, b) => {
+      if (logSortField === 'start') {
+        const diff = new Date(a.started_at).getTime() - new Date(b.started_at).getTime();
+        return logSortDir === 'desc' ? -diff : diff;
+      }
+      // sort by end — entries without an end time sink to the bottom
+      if (!a.ended_at && !b.ended_at) return 0;
+      if (!a.ended_at) return 1;
+      if (!b.ended_at) return -1;
+      const diff = new Date(a.ended_at).getTime() - new Date(b.ended_at).getTime();
+      return logSortDir === 'desc' ? -diff : diff;
+    });
+
+  const totalPages = Math.max(1, Math.ceil(filteredLogs.length / PAGE_SIZE));
+  const pagedLogs = filteredLogs.slice(logPage * PAGE_SIZE, (logPage + 1) * PAGE_SIZE);
 
   return (
     <>
@@ -869,8 +1086,62 @@ export default function DashboardScreen() {
             {logs.length > 0 && (
               <>
                 <View style={styles.logPanelHeader}>
-                  <Text style={styles.sectionLabel}>Recent Activity</Text>
-                  {logs.length > PAGE_SIZE && (
+                  <Text style={styles.sectionLabel}>Activity Log</Text>
+                  <View style={styles.sortRow}>
+                    <Text style={styles.sortLabel}>Sort by:</Text>
+                    {(['start', 'end'] as SortField[]).map((field) => {
+                      const active = logSortField === field;
+                      const arrow = active ? (logSortDir === 'desc' ? ' ↓' : ' ↑') : '';
+                      return (
+                        <TouchableOpacity
+                          key={field}
+                          style={[styles.sortBtn, active && styles.sortBtnActive]}
+                          onPress={() => {
+                            if (active) {
+                              setLogSortDir((d) => d === 'desc' ? 'asc' : 'desc');
+                            } else {
+                              setLogSortField(field);
+                              setLogSortDir('desc');
+                            }
+                            setLogPage(0);
+                          }}
+                        >
+                          <Text style={[styles.sortBtnText, active && styles.sortBtnTextActive]}>
+                            {field === 'start' ? 'Start' : 'End'}{arrow}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                </View>
+
+                {/* Filter chips */}
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterScroll}>
+                  <TouchableOpacity
+                    style={[styles.filterChip, logFilter === null && styles.filterChipOn]}
+                    onPress={() => { setLogFilter(null); setLogPage(0); }}
+                  >
+                    <Text style={[styles.filterChipText, logFilter === null && styles.filterChipTextOn]}>All</Text>
+                  </TouchableOpacity>
+                  {uniqueTypes.map((type) => (
+                    <TouchableOpacity
+                      key={type}
+                      style={[styles.filterChip, logFilter === type && styles.filterChipOn]}
+                      onPress={() => { setLogFilter(logFilter === type ? null : type); setLogPage(0); }}
+                    >
+                      <Text style={[styles.filterChipText, logFilter === type && styles.filterChipTextOn]}>
+                        {type}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+
+                {/* Pagination */}
+                {filteredLogs.length > PAGE_SIZE && (
+                  <View style={[styles.logPanelHeader, { marginTop: 8 }]}>
+                    <Text style={styles.pageLabel}>
+                      {logPage * PAGE_SIZE + 1}–{Math.min((logPage + 1) * PAGE_SIZE, filteredLogs.length)} of {filteredLogs.length}
+                    </Text>
                     <View style={styles.pagination}>
                       <TouchableOpacity
                         style={[styles.pageBtn, logPage === 0 && styles.pageBtnDisabled]}
@@ -879,9 +1150,6 @@ export default function DashboardScreen() {
                       >
                         <Ionicons name="chevron-back" size={16} color={logPage === 0 ? '#d1d5db' : '#6366f1'} />
                       </TouchableOpacity>
-                      <Text style={styles.pageLabel}>
-                        {logPage * PAGE_SIZE + 1}–{Math.min((logPage + 1) * PAGE_SIZE, logs.length)} of {logs.length}
-                      </Text>
                       <TouchableOpacity
                         style={[styles.pageBtn, logPage >= totalPages - 1 && styles.pageBtnDisabled]}
                         onPress={() => setLogPage((p) => Math.min(totalPages - 1, p + 1))}
@@ -890,8 +1158,8 @@ export default function DashboardScreen() {
                         <Ionicons name="chevron-forward" size={16} color={logPage >= totalPages - 1 ? '#d1d5db' : '#6366f1'} />
                       </TouchableOpacity>
                     </View>
-                  )}
-                </View>
+                  </View>
+                )}
 
                 <View style={styles.logPanel}>
                   {pagedLogs.map((item, index) => (
@@ -960,6 +1228,7 @@ const styles = StyleSheet.create({
   },
   chartHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
   chartTitle: { fontSize: 13, fontWeight: '600', color: '#374151' },
+  chartMean: { fontSize: 11, color: '#9ca3af', marginTop: 1 },
   zoomRow: { flexDirection: 'row', gap: 6 },
   zoomBtn: { width: 26, height: 26, borderRadius: 13, backgroundColor: '#e5e7eb', alignItems: 'center', justifyContent: 'center' },
   zoomBtnText: { fontSize: 16, fontWeight: '600', color: '#374151', lineHeight: 20 },
@@ -967,6 +1236,16 @@ const styles = StyleSheet.create({
   zoomBtnToday: { width: 'auto' as any, paddingHorizontal: 8, borderRadius: 13, backgroundColor: '#6366f1' },
   zoomBtnTodayText: { fontSize: 11, fontWeight: '700', color: '#fff', lineHeight: 20 },
   chartEmpty: { fontSize: 13, color: '#9ca3af', paddingBottom: 4 },
+
+  zoomBtnFlip: { borderWidth: 1, borderColor: '#6366f1', backgroundColor: 'transparent' },
+  zoomBtnFlipOn: { backgroundColor: '#6366f1' },
+
+  // Flipped timeline
+  flippedDateLabel: {
+    width: TIME_LABEL_W, alignItems: 'flex-end' as const, justifyContent: 'center' as const,
+    paddingRight: 4, borderRightWidth: 1, borderRightColor: '#e5e7eb',
+  },
+  flippedDateText: { fontSize: 8, color: '#6b7280' },
 
   // Log panel
   logPanelHeader: {
@@ -999,6 +1278,26 @@ const styles = StyleSheet.create({
   duration: { fontSize: 13, color: '#374151', fontWeight: '500' },
   date: { fontSize: 11, color: '#9ca3af', marginTop: 1 },
   notes: { fontSize: 12, color: '#6b7280', marginTop: 2 },
+
+  // Log filter + sort
+  filterScroll: { marginBottom: 10 },
+  filterChip: {
+    paddingHorizontal: 12, paddingVertical: 5, borderRadius: 14,
+    backgroundColor: '#f3f4f6', marginRight: 6,
+    borderWidth: 1, borderColor: '#e5e7eb',
+  },
+  filterChipOn: { backgroundColor: '#6366f1', borderColor: '#6366f1' },
+  filterChipText: { fontSize: 12, color: '#6b7280', fontWeight: '500', textTransform: 'capitalize' },
+  filterChipTextOn: { color: '#fff', fontWeight: '700' },
+  sortRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  sortLabel: { fontSize: 12, color: '#9ca3af', fontWeight: '500' },
+  sortBtn: {
+    paddingHorizontal: 9, paddingVertical: 4, borderRadius: 12,
+    backgroundColor: '#f3f4f6', borderWidth: 1, borderColor: '#e5e7eb',
+  },
+  sortBtnActive: { backgroundColor: '#eef2ff', borderColor: '#c7d2fe' },
+  sortBtnText: { fontSize: 12, color: '#6b7280', fontWeight: '600' },
+  sortBtnTextActive: { color: '#6366f1' },
 
   // Pagination
   pagination: {
