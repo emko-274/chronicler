@@ -13,7 +13,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
-import { createLog, deleteLog, getCategories, getLogs, ActivityLog } from '@/lib/api';
+import { createLog, deleteLog, getCategories, getLogs, restoreCategory, ActivityLog } from '@/lib/api';
 
 const BUILTIN_TYPES = ['sleep', 'exercise', 'caffeine'];
 
@@ -198,6 +198,9 @@ export default function LogScreen() {
 
   const handleSave = async () => {
     if (!activityType) return Alert.alert('Please select an activity type.');
+
+    // If this category was previously hidden, unhide it so it shows on the dashboard
+    try { await restoreCategory(activityType); } catch {}
 
     const now = new Date();
 

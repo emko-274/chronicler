@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -298,6 +298,7 @@ interface TooltipState {
 const TOOLTIP_W = 152;
 const TOOLTIP_PAD = 8;
 const FLIPPED_ROW_H = 24; // height of each date row in flipped mode
+const HMAP_SLOTS = 48;    // 30-min buckets for the heatmap density layer
 
 function TimelineChart({
   logs,
@@ -318,6 +319,11 @@ function TimelineChart({
   const [crosshairY, setCrosshairY] = useState<number | null>(null);
   const [isFlipped, setIsFlipped] = useState(false);
   const isFlippedRef = useRef(false);
+  const [showHeatmap, setShowHeatmap] = useState(false);
+  const [hmapType, setHmapType] = useState('');
+  const [viewportW, setViewportW] = useState(SCREEN_W - TIME_LABEL_W - 32);
+  const [scrollXSnap, setScrollXSnap] = useState(Number.MAX_SAFE_INTEGER);
+  const [scrollYSnap, setScrollYSnap] = useState(Number.MAX_SAFE_INTEGER);
   useEffect(() => { isFlippedRef.current = isFlipped; }, [isFlipped]);
   // Width of the time-of-day axis in flipped mode (measured on layout)
   const [flippedW, setFlippedW] = useState(SCREEN_W - 94);
@@ -357,13 +363,19 @@ function TimelineChart({
     setTooltip(null);
     scrollXRef.current = 0;
     scrollYRef.current = 0;
+    // Reset snap states to large sentinels so they clamp to max-scroll (most recent
+    // days/columns) before the first real onScroll event fires after scrollToEnd.
+    setScrollXSnap(Number.MAX_SAFE_INTEGER);
+    setScrollYSnap(Number.MAX_SAFE_INTEGER);
     setTimeout(() => scrollRef.current?.scrollToEnd({ animated: false }), 50);
   }, [isFlipped]);
 
   const handleScroll = (e: any) => {
-    scrollXRef.current = e.nativeEvent.contentOffset.x;
+    const x = e.nativeEvent.contentOffset.x;
+    scrollXRef.current = x;
+    setScrollXSnap(x);
     const threshold = colWidthRef.current * 14;
-    if (scrollXRef.current < threshold && !isExtending.current) {
+    if (x < threshold && !isExtending.current) {
       isExtending.current = true;
       pendingCompensation.current = EXTEND_BY * colWidthRef.current;
       setNumDays(prev => prev + EXTEND_BY);
@@ -452,6 +464,80 @@ function TimelineChart({
     }
   });
 
+  // Heatmap density: how many log-minutes fall in each 30-min time-of-day bucket,
+  // scoped to only the days currently visible in the scroll viewport.
+  const hmapDensity = useMemo(() => {
+    if (!showHeatmap) return null;
+    const today = new Date();
+    const daySet = new Set<string>();
+    if (isFlipped) {
+      // Flipped: use only the rows visible in the vertical scroll viewport
+      const maxScrollY = Math.max(0, numDays * FLIPPED_ROW_H - CHART_H);
+      const clampedY = Math.min(scrollYSnap, maxScrollY);
+      const visStartRowIdx = Math.max(0, Math.floor(clampedY / FLIPPED_ROW_H));
+      const visEndRowIdx = Math.min(numDays, visStartRowIdx + Math.ceil(CHART_H / FLIPPED_ROW_H) + 1);
+      for (let i = visStartRowIdx; i < visEndRowIdx; i++) {
+        const d = new Date(today);
+        d.setDate(today.getDate() - (numDays - 1 - i));
+        daySet.add(dayKey(d));
+      }
+    } else {
+      // Normal: use only the columns visible in the horizontal scroll viewport
+      const maxScrollX = Math.max(0, numDays * colWidth - viewportW);
+      const clampedX = Math.min(scrollXSnap, maxScrollX);
+      const visStartIdx = Math.max(0, Math.floor(clampedX / colWidth));
+      const visEndIdx = Math.min(numDays, visStartIdx + Math.ceil(viewportW / colWidth) + 1);
+      for (let i = visStartIdx; i < visEndIdx; i++) {
+        const d = new Date(today);
+        d.setDate(today.getDate() - (numDays - 1 - i));
+        daySet.add(dayKey(d));
+      }
+    }
+    const windowLogs = logs.filter((l) => {
+      if (daySet.has(dayKey(new Date(l.started_at)))) return true;
+      if (l.ended_at) return daySet.has(dayKey(new Date(l.ended_at)));
+      return false;
+    });
+    const raw = new Float32Array(HMAP_SLOTS);
+    windowLogs.forEach((l) => {
+      const typeMatch = hmapType ? l.activity_type === hmapType : visibleTypes.has(l.activity_type);
+      if (!typeMatch) return;
+      const start = new Date(l.started_at);
+      const startMOD = start.getHours() * 60 + start.getMinutes(); // minute-of-day
+      if (!l.ended_at || l.duration_minutes === 0) {
+        raw[Math.min(Math.floor((startMOD / 1440) * HMAP_SLOTS), HMAP_SLOTS - 1)] += 1;
+        return;
+      }
+      const end = new Date(l.ended_at);
+      const endMOD = end.getHours() * 60 + end.getMinutes();
+      const crossMidnight = dayKey(start) !== dayKey(end);
+      // Segment on start day: startMOD → midnight (or endMOD if same day)
+      const seg1End = crossMidnight ? 1440 : endMOD;
+      const s1 = Math.floor((startMOD / 1440) * HMAP_SLOTS);
+      const e1 = Math.min(Math.ceil((seg1End / 1440) * HMAP_SLOTS), HMAP_SLOTS);
+      for (let s = s1; s < e1; s++) raw[s] += 1;
+      // Segment on end day: midnight → endMOD
+      if (crossMidnight) {
+        const e2 = Math.ceil((endMOD / 1440) * HMAP_SLOTS);
+        for (let s = 0; s < e2; s++) raw[s] += 1;
+      }
+    });
+    // Gaussian smooth with wrap-around at midnight (σ ≈ 1.5 slots = 45 min)
+    const smoothed = new Float32Array(HMAP_SLOTS);
+    const sigma = 1.5;
+    for (let i = 0; i < HMAP_SLOTS; i++) {
+      let sum = 0, wt = 0;
+      for (let j = -5; j <= 5; j++) {
+        const idx = (i + j + HMAP_SLOTS) % HMAP_SLOTS;
+        const w = Math.exp(-(j * j) / (2 * sigma * sigma));
+        sum += raw[idx] * w; wt += w;
+      }
+      smoothed[i] = wt > 0 ? sum / wt : 0;
+    }
+    const maxVal = Math.max(...smoothed, 1);
+    return { values: smoothed, maxVal };
+  }, [showHeatmap, isFlipped, logs, visibleTypes, numDays, colWidth, viewportW, scrollXSnap, scrollYSnap, hmapType]);
+
   // Sparse date labels so text doesn't overlap at small column widths
   const labelEvery = colWidth < 10 ? 14 : colWidth < 20 ? 7 : 1;
 
@@ -482,6 +568,28 @@ function TimelineChart({
               <Text style={[styles.zoomBtnText, styles.zoomBtnTodayText]}>Today</Text>
             </TouchableOpacity>
           )}
+          {(() => {
+            const typesSeen = new Set<string>();
+            const chartTypes: string[] = [];
+            logs.forEach(l => { if (!typesSeen.has(l.activity_type)) { typesSeen.add(l.activity_type); chartTypes.push(l.activity_type); } });
+            const hmapOpts: DropdownOpt[] = [
+              { label: 'All', value: '' },
+              ...chartTypes.map(t => ({ label: t, value: t })),
+            ];
+            return (
+              <>
+                {showHeatmap && (
+                  <PanelDropdown value={hmapType} options={hmapOpts} onChange={setHmapType} />
+                )}
+                <TouchableOpacity
+                  style={[styles.zoomBtn, styles.zoomBtnFlip, showHeatmap && styles.zoomBtnFlipOn]}
+                  onPress={() => setShowHeatmap(h => !h)}
+                >
+                  <Ionicons name="flame" size={13} color={showHeatmap ? '#fff' : '#6366f1'} />
+                </TouchableOpacity>
+              </>
+            );
+          })()}
           <TouchableOpacity
             style={[styles.zoomBtn, styles.zoomBtnFlip, isFlipped && styles.zoomBtnFlipOn]}
             onPress={() => setIsFlipped(f => !f)}
@@ -514,7 +622,9 @@ function TimelineChart({
           </View>
 
           {/* Scrollable date rows — today at the bottom */}
-          <ScrollView ref={scrollRef} style={{ maxHeight: CHART_H }} showsVerticalScrollIndicator={false}>
+          <ScrollView ref={scrollRef} style={{ maxHeight: CHART_H }} showsVerticalScrollIndicator={false}
+            onScroll={e => setScrollYSnap(e.nativeEvent.contentOffset.y)}
+            scrollEventThrottle={100}>
             {days.map((day, rowIdx) => {
               const entries = (byDay.get(day) ?? []).filter(l => visibleTypes.has(l.activity_type));
               const d = new Date(day + 'T12:00:00');
@@ -538,6 +648,21 @@ function TimelineChart({
                           strokeDasharray={h === 0 || h === 24 ? undefined : '3,3'} />
                       );
                     })}
+                    {hmapDensity && (() => {
+                      const slotW = flippedW / HMAP_SLOTS;
+                      return (
+                        <G>
+                          {Array.from(hmapDensity.values).map((val, i) => {
+                            const t = val / hmapDensity.maxVal;
+                            if (t < 0.025) return null;
+                            return (
+                              <Rect key={i} x={i * slotW} y={0} width={slotW + 0.5} height={FLIPPED_ROW_H}
+                                fill="#f97316" opacity={t * 0.45} />
+                            );
+                          })}
+                        </G>
+                      );
+                    })()}
                     {entries.map(log => {
                       const start = new Date(log.started_at);
                       const logStartDay = dayKey(start);
@@ -611,6 +736,7 @@ function TimelineChart({
             horizontal
             showsHorizontalScrollIndicator={false}
             scrollEnabled={!isPinching}
+            onLayout={e => setViewportW(e.nativeEvent.layout.width)}
             onScroll={handleScroll}
             scrollEventThrottle={100}
             style={{ flex: 1 }}
@@ -629,6 +755,28 @@ function TimelineChart({
                     strokeDasharray={h === 0 ? undefined : '3,3'} />
                 );
               })}
+
+              {/* Heatmap density overlay — rendered before bars so bars stay on top */}
+              {hmapDensity && (() => {
+                const slotH = CHART_H / HMAP_SLOTS;
+                return (
+                  <G>
+                    {Array.from(hmapDensity.values).map((d, i) => {
+                      const t = d / hmapDensity.maxVal;
+                      if (t < 0.025) return null;
+                      return (
+                        <Rect
+                          key={i}
+                          x={0} y={i * slotH}
+                          width={totalChartW} height={slotH + 0.5}
+                          fill="#f97316"
+                          opacity={t * 0.45}
+                        />
+                      );
+                    })}
+                  </G>
+                );
+              })()}
 
               {days.map((day, colIdx) => {
                 const colX = colIdx * colWidth;
@@ -812,32 +960,37 @@ function ActivityChart({
   type,
   logs,
   colorPair,
+  stepIdx,
+  setStepIdx,
+  offsetDays,
+  setOffsetDays,
+  acXStepRef,
 }: {
   type: string;
   logs: ActivityLog[];
   colorPair: string[];
+  stepIdx: number;
+  setStepIdx: (v: number | ((prev: number) => number)) => void;
+  offsetDays: number;
+  setOffsetDays: (v: number | ((prev: number) => number)) => void;
+  acXStepRef: { current: number };
 }) {
-  const [stepIdx, setStepIdx] = useState(1);
-  const [offsetDays, setOffsetDays] = useState(0);
   const [tooltip, setTooltip] = useState<{ idx: number } | null>(null);
 
-  // Refs needed by PanResponder (created once, callbacks must not close over stale state)
   const offsetRef = useRef(0);
   const dragBase = useRef(0);
-  const xStepRef = useRef(1);
-  const svgWrapRef = useRef<View>(null);
-  const wheelAccum = useRef(0);
-  const zoomAccum = useRef(0);
   const stepIdxRef = useRef(1);
   const pinchState = useRef<{ initialDistance: number; initialStepIdx: number } | null>(null);
 
   useEffect(() => { stepIdxRef.current = stepIdx; }, [stepIdx]);
+  useEffect(() => { offsetRef.current = offsetDays; }, [offsetDays]);
 
   function setOffset(v: number) {
     offsetRef.current = v;
     setOffsetDays(v);
   }
 
+  // Native-only: single-finger pan + two-finger pinch-to-zoom
   const pan = useRef(
     PanResponder.create({
       onStartShouldSetPanResponderCapture: (evt) => evt.nativeEvent.touches.length === 2,
@@ -860,7 +1013,6 @@ function ActivityChart({
           const [t0, t1] = evt.nativeEvent.touches;
           const dist = Math.hypot(t1.pageX - t0.pageX, t1.pageY - t0.pageY);
           const scale = dist / pinchState.current.initialDistance;
-          // spread fingers = zoom in = fewer days; pinch = zoom out = more days
           const targetWindow = AC_WINDOW_STEPS[pinchState.current.initialStepIdx] / scale;
           let newIdx = pinchState.current.initialStepIdx;
           let minDiff = Infinity;
@@ -870,7 +1022,7 @@ function ActivityChart({
           });
           setStepIdx(newIdx);
         } else {
-          const delta = Math.round(-dx / Math.max(xStepRef.current, 1));
+          const delta = Math.round(-dx / Math.max(acXStepRef.current, 1));
           setOffset(Math.min(365, Math.max(0, dragBase.current + delta)));
         }
       },
@@ -879,65 +1031,13 @@ function ActivityChart({
     })
   ).current;
 
-  // Capture-phase document listener: fires before any SVG child can call
-  // stopPropagation, then checks the click was within this chart's wrapper.
-  useEffect(() => {
-    if (Platform.OS !== 'web') return;
-    const onDown = (e: MouseEvent) => {
-      const el = svgWrapRef.current as unknown as HTMLElement;
-      if (!el?.contains(e.target as Node)) return;
-      const startX = e.clientX;
-      const startOffset = offsetRef.current;
-      const onMove = (ev: MouseEvent) => {
-        const delta = Math.round(-(ev.clientX - startX) / Math.max(xStepRef.current, 1));
-        setOffset(Math.min(365, Math.max(0, startOffset + delta)));
-      };
-      const onUp = () => {
-        document.removeEventListener('mousemove', onMove);
-        document.removeEventListener('mouseup', onUp);
-      };
-      document.addEventListener('mousemove', onMove);
-      document.addEventListener('mouseup', onUp);
-    };
-    document.addEventListener('mousedown', onDown, true); // capture phase
-
-    // Wheel: pan on plain scroll, zoom on ctrl+wheel (trackpad pinch).
-    const onWheel = (e: WheelEvent) => {
-      const el = svgWrapRef.current as unknown as HTMLElement;
-      if (!el?.contains(e.target as Node)) return;
-      e.preventDefault();
-      if (e.ctrlKey) {
-        zoomAccum.current += e.deltaY;
-        if (Math.abs(zoomAccum.current) > 25) {
-          setStepIdx(i => zoomAccum.current > 0
-            ? Math.min(AC_WINDOW_STEPS.length - 1, i + 1)
-            : Math.max(0, i - 1));
-          zoomAccum.current = 0;
-        }
-        return;
-      }
-      const delta = e.deltaX !== 0 ? e.deltaX : e.deltaY;
-      wheelAccum.current += delta / 20;
-      const days = Math.round(wheelAccum.current);
-      if (days !== 0) {
-        wheelAccum.current -= days;
-        setOffset(Math.min(365, Math.max(0, offsetRef.current + days)));
-      }
-    };
-    document.addEventListener('wheel', onWheel, { passive: false });
-
-    return () => {
-      document.removeEventListener('mousedown', onDown, true);
-      document.removeEventListener('wheel', onWheel);
-    };
-  }, []);
-
+  const hasDuration = logs.some((l) => l.activity_type === type && l.duration_minutes != null);
   const byDate = new Map<string, number>();
   logs
-    .filter((l) => l.activity_type === type && l.duration_minutes != null)
+    .filter((l) => l.activity_type === type && (hasDuration ? l.duration_minutes != null : true))
     .forEach((l) => {
       const key = dayKey(new Date(l.started_at));
-      byDate.set(key, (byDate.get(key) ?? 0) + l.duration_minutes!);
+      byDate.set(key, (byDate.get(key) ?? 0) + (hasDuration ? l.duration_minutes! : 1));
     });
 
   const windowSize = AC_WINDOW_STEPS[stepIdx];
@@ -967,7 +1067,7 @@ function ActivityChart({
   }
 
   const hasRangeData = dataPoints.length >= 2;
-  const unit = chartUnit(type);
+  const unit = hasDuration ? chartUnit(type) : 'times';
   const chartVals = hasRangeData ? dataPoints.map((d) => toChartValue(type, d.value!)) : [];
   const mean = hasRangeData ? chartVals.reduce((s, v) => s + v, 0) / chartVals.length : 0;
   const meanStr = hasRangeData ? `${mean % 1 === 0 ? mean.toFixed(0) : mean.toFixed(1)} ${unit}` : '';
@@ -983,7 +1083,6 @@ function ActivityChart({
   const plotH = SVG_H - PT - PB;
   const n = days.length;
   const xStep = n > 1 ? plotW / (n - 1) : plotW;
-  xStepRef.current = xStep;
   const xOf = (i: number) => PL + i * xStep;
 
   const maxVal = hasRangeData ? Math.max(...dataPoints.map((d) => toChartValue(type, d.value!))) : 1;
@@ -1058,7 +1157,7 @@ function ActivityChart({
           </TouchableOpacity>
         </View>
       </View>
-      <View ref={svgWrapRef} {...pan.panHandlers} style={Platform.OS === 'web' ? { cursor: 'ew-resize' } as any : undefined}>
+      <View {...(Platform.OS !== 'web' ? pan.panHandlers : {})} style={Platform.OS === 'web' ? { cursor: 'ew-resize' } as any : undefined}>
       <Svg width={SVG_W} height={SVG_H} style={{ borderRadius: 10, overflow: 'hidden' }}>
         <Defs>
           <LinearGradient id={`bg_${type}`} x1="0" y1="0" x2="1" y2="1">
@@ -1344,6 +1443,61 @@ export default function DashboardScreen() {
   const [loading, setLoading] = useState(true);
   const [visibleTypes, setVisibleTypes] = useState<Set<string>>(new Set());
   const [editingLog, setEditingLog] = useState<ActivityLog | null>(null);
+  const [acStepIdx, setAcStepIdx] = useState(1);
+  const [acOffsetDays, setAcOffsetDays] = useState(0);
+  const acOffsetRef = useRef(0);
+  const acXStepRef = useRef(1);
+  const acWheelAccum = useRef(0);
+  const acZoomAccum = useRef(0);
+  const acContainerRef = useRef<View>(null);
+  acOffsetRef.current = acOffsetDays;
+  // Keep xStep in sync for gesture handler (same formula as ActivityChart)
+  { const ws = AC_WINDOW_STEPS[acStepIdx]; const pw = (SCREEN_W - 32) - 36 - 8; acXStepRef.current = ws > 1 ? pw / (ws - 1) : pw; }
+
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const onDown = (e: MouseEvent) => {
+      const el = acContainerRef.current as unknown as HTMLElement;
+      if (!el?.contains(e.target as Node)) return;
+      const startX = e.clientX;
+      const startOffset = acOffsetRef.current;
+      const onMove = (ev: MouseEvent) => {
+        const delta = Math.round(-(ev.clientX - startX) / Math.max(acXStepRef.current, 1));
+        const next = Math.min(365, Math.max(0, startOffset + delta));
+        acOffsetRef.current = next;
+        setAcOffsetDays(next);
+      };
+      const onUp = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    };
+    document.addEventListener('mousedown', onDown, true);
+    const onWheel = (e: WheelEvent) => {
+      const el = acContainerRef.current as unknown as HTMLElement;
+      if (!el?.contains(e.target as Node)) return;
+      e.preventDefault();
+      if (e.ctrlKey) {
+        acZoomAccum.current += e.deltaY;
+        if (Math.abs(acZoomAccum.current) > 25) {
+          const dir = acZoomAccum.current; acZoomAccum.current = 0;
+          setAcStepIdx(i => dir > 0 ? Math.min(AC_WINDOW_STEPS.length - 1, i + 1) : Math.max(0, i - 1));
+        }
+        return;
+      }
+      const delta = e.deltaX !== 0 ? e.deltaX : e.deltaY;
+      acWheelAccum.current += delta / 20;
+      const days = Math.round(acWheelAccum.current);
+      if (days !== 0) {
+        acWheelAccum.current -= days;
+        const next = Math.min(365, Math.max(0, acOffsetRef.current + days));
+        acOffsetRef.current = next;
+        setAcOffsetDays(next);
+      }
+    };
+    document.addEventListener('wheel', onWheel, { passive: false });
+    return () => { document.removeEventListener('mousedown', onDown, true); document.removeEventListener('wheel', onWheel); };
+  }, []);
+
   const [logPage, setLogPage] = useState(0);
   const [logFilter, setLogFilter] = useState('');
   const [logSort, setLogSort] = useState('start_desc');
@@ -1447,14 +1601,21 @@ export default function DashboardScreen() {
               onEdit={setEditingLog}
             />
 
-            {charts.map((type) => (
-              <ActivityChart
-                key={type}
-                type={type}
-                logs={logs}
-                colorPair={colorMap.get(type) ?? TYPE_COLORS[0]}
-              />
-            ))}
+            <View ref={acContainerRef}>
+              {charts.map((type) => (
+                <ActivityChart
+                  key={type}
+                  type={type}
+                  logs={logs}
+                  colorPair={colorMap.get(type) ?? TYPE_COLORS[0]}
+                  stepIdx={acStepIdx}
+                  setStepIdx={setAcStepIdx}
+                  offsetDays={acOffsetDays}
+                  setOffsetDays={setAcOffsetDays}
+                  acXStepRef={acXStepRef}
+                />
+              ))}
+            </View>
 
             {logs.length === 0 && (
               <Text style={styles.empty}>No entries yet. Tap "Log Activity" to get started.</Text>
