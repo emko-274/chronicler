@@ -1,0 +1,20 @@
+{
+  "expo": {
+    "name": "Activity Tracker",
+    "slug": "activity-tracker",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "activitytracker",
+    "web": {
+      "bundler": "metro",
+      "output": "static"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-asset"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}

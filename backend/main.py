@@ -1,0 +1,26 @@
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from database import engine, Base
+from routes import logs, analyze, categories
+
+# Create database tables on startup
+Base.metadata.create_all(bind=engine)
+
+app = FastAPI(title="Activity Tracker API")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.include_router(logs.router, prefix="/logs", tags=["logs"])
+app.include_router(analyze.router, prefix="/analyze", tags=["analyze"])
+app.include_router(categories.router, prefix="/categories", tags=["categories"])
+
+
+@app.get("/health")
+def health_check():
+    return {"status": "ok"}
