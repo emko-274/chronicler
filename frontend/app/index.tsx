@@ -153,6 +153,10 @@ function EditLogModal({
 
   const handleSave = async () => {
     if (!log) return;
+    if (endDate && endDate <= startDate) {
+      Alert.alert('Invalid time', 'End time must be after start time.');
+      return;
+    }
     setSaving(true);
     try {
       await updateLog(log.id, {
@@ -773,6 +777,7 @@ function ActivityChart({
   const dragBase = useRef(0);
   const xStepRef = useRef(1);
   const svgWrapRef = useRef<View>(null);
+  const wheelAccum = useRef(0);
 
   function setOffset(v: number) {
     offsetRef.current = v;
@@ -786,7 +791,7 @@ function ActivityChart({
       onPanResponderGrant: () => { dragBase.current = offsetRef.current; },
       onPanResponderMove: (_, { dx }) => {
         const delta = Math.round(-dx / Math.max(xStepRef.current, 1));
-        setOffset(Math.max(0, dragBase.current + delta));
+        setOffset(Math.min(365, Math.max(0, dragBase.current + delta)));
       },
     })
   ).current;
@@ -802,7 +807,7 @@ function ActivityChart({
       const startOffset = offsetRef.current;
       const onMove = (ev: MouseEvent) => {
         const delta = Math.round(-(ev.clientX - startX) / Math.max(xStepRef.current, 1));
-        setOffset(Math.max(0, startOffset + delta));
+        setOffset(Math.min(365, Math.max(0, startOffset + delta)));
       };
       const onUp = () => {
         document.removeEventListener('mousemove', onMove);
@@ -812,7 +817,27 @@ function ActivityChart({
       document.addEventListener('mouseup', onUp);
     };
     document.addEventListener('mousedown', onDown, true); // capture phase
-    return () => document.removeEventListener('mousedown', onDown, true);
+
+    // Wheel / trackpad: document-level with containment check (same pattern as
+    // mousedown) so we don't depend on svgWrapRef.current being a real DOM node.
+    const onWheel = (e: WheelEvent) => {
+      const el = svgWrapRef.current as unknown as HTMLElement;
+      if (!el?.contains(e.target as Node)) return;
+      e.preventDefault();
+      const delta = e.deltaX !== 0 ? e.deltaX : e.deltaY;
+      wheelAccum.current += delta / 20; // fixed sensitivity: ~20px per day
+      const days = Math.round(wheelAccum.current);
+      if (days !== 0) {
+        wheelAccum.current -= days;
+        setOffset(Math.min(365, Math.max(0, offsetRef.current + days)));
+      }
+    };
+    document.addEventListener('wheel', onWheel, { passive: false });
+
+    return () => {
+      document.removeEventListener('mousedown', onDown, true);
+      document.removeEventListener('wheel', onWheel);
+    };
   }, []);
 
   const byDate = new Map<string, number>();
@@ -823,16 +848,9 @@ function ActivityChart({
       byDate.set(key, (byDate.get(key) ?? 0) + l.duration_minutes!);
     });
 
-  // Clamp offset so the window never scrolls past the earliest recorded day
   const windowSize = AC_WINDOW_STEPS[stepIdx];
   const today = new Date();
-  const allDayKeys = [...byDate.keys()].sort();
-  const maxOffset = allDayKeys.length > 0
-    ? Math.max(0, Math.round(
-        (today.getTime() - new Date(allDayKeys[0] + 'T12:00:00').getTime()) / 86400000
-      ) - windowSize + 1)
-    : 0;
-  const clampedOffset = Math.min(offsetDays, maxOffset);
+  const clampedOffset = offsetDays;
 
   const days: Array<{ key: string; value: number | null }> = [];
   for (let i = windowSize - 1; i >= 0; i--) {
@@ -843,7 +861,9 @@ function ActivityChart({
   }
 
   const dataPoints = days.filter((d) => d.value !== null);
-  if (dataPoints.length < 2) {
+
+  // Only hide the chart entirely when no data has ever been logged for this type
+  if (byDate.size === 0) {
     return (
       <View style={styles.chartCard}>
         <Text style={styles.chartTitle}>
@@ -854,10 +874,11 @@ function ActivityChart({
     );
   }
 
+  const hasRangeData = dataPoints.length >= 2;
   const unit = chartUnit(type);
-  const chartVals = dataPoints.map((d) => toChartValue(type, d.value!));
-  const mean = chartVals.reduce((s, v) => s + v, 0) / chartVals.length;
-  const meanStr = `${mean % 1 === 0 ? mean.toFixed(0) : mean.toFixed(1)} ${unit}`;
+  const chartVals = hasRangeData ? dataPoints.map((d) => toChartValue(type, d.value!)) : [];
+  const mean = hasRangeData ? chartVals.reduce((s, v) => s + v, 0) / chartVals.length : 0;
+  const meanStr = hasRangeData ? `${mean % 1 === 0 ? mean.toFixed(0) : mean.toFixed(1)} ${unit}` : '';
 
   // SVG layout
   const SVG_W = SCREEN_W - 32;
@@ -870,30 +891,31 @@ function ActivityChart({
   const plotH = SVG_H - PT - PB;
   const n = days.length;
   const xStep = n > 1 ? plotW / (n - 1) : plotW;
-  xStepRef.current = xStep; // keep in sync for PanResponder
+  xStepRef.current = xStep;
   const xOf = (i: number) => PL + i * xStep;
 
-  const maxVal = Math.max(...dataPoints.map((d) => toChartValue(type, d.value!)));
+  const maxVal = hasRangeData ? Math.max(...dataPoints.map((d) => toChartValue(type, d.value!))) : 1;
   const yMax = maxVal > 0 ? maxVal * 1.15 : 1;
   const yOf = (v: number) => PT + plotH * (1 - v / yMax);
-  const meanY = yOf(mean);
+  const meanY = hasRangeData ? yOf(mean) : PT + plotH / 2;
   const baseY = PT + plotH;
 
-  // Group contiguous non-null days into segments for smooth curve rendering
   const segments: Array<Array<{ x: number; y: number }>> = [];
-  let seg: Array<{ x: number; y: number }> = [];
-  days.forEach((d, i) => {
-    if (d.value !== null) {
-      seg.push({ x: xOf(i), y: yOf(toChartValue(type, d.value)) });
-    } else if (seg.length > 0) {
-      segments.push(seg);
-      seg = [];
-    }
-  });
-  if (seg.length > 0) segments.push(seg);
+  if (hasRangeData) {
+    let seg: Array<{ x: number; y: number }> = [];
+    days.forEach((d, i) => {
+      if (d.value !== null) {
+        seg.push({ x: xOf(i), y: yOf(toChartValue(type, d.value)) });
+      } else if (seg.length > 0) {
+        segments.push(seg);
+        seg = [];
+      }
+    });
+    if (seg.length > 0) segments.push(seg);
+  }
 
   const labelEvery = n <= 7 ? 1 : n <= 14 ? 2 : Math.ceil(n / 7);
-  const yTickVals = [0, yMax / 2, yMax];
+  const yTickVals = hasRangeData ? [0, yMax / 2, yMax] : [];
   const formatY = (v: number) => (v % 1 === 0 ? v.toFixed(0) : v.toFixed(1));
 
   const tipDay = tooltip !== null ? days[tooltip.idx] : null;
@@ -917,7 +939,7 @@ function ActivityChart({
       <View style={styles.chartHeader}>
         <View>
           <Text style={styles.chartTitle}>{titleStr}</Text>
-          <Text style={styles.chartMean}>avg {meanStr}</Text>
+          {hasRangeData && <Text style={styles.chartMean}>avg {meanStr}</Text>}
         </View>
         <View style={styles.zoomRow}>
           {clampedOffset > 0 && (
@@ -957,6 +979,12 @@ function ActivityChart({
           </LinearGradient>
         </Defs>
         <Rect x={0} y={0} width={SVG_W} height={SVG_H} fill={`url(#bg_${type})`} rx={10} />
+
+        {!hasRangeData && (
+          <SvgText x={SVG_W / 2} y={SVG_H / 2 + 5} fontSize={12} fill="rgba(255,255,255,0.6)" textAnchor="middle">
+            No data in this range
+          </SvgText>
+        )}
 
         {/* Y-axis grid lines and labels */}
         {yTickVals.map((v, i) => {

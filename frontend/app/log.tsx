@@ -227,6 +227,7 @@ export default function LogScreen() {
 
     // ── Timed path: overlap check then save ────────────────────────────────
     if (startDate > now) return Alert.alert('Invalid time', 'Start time cannot be in the future.');
+    if (hasEnd && endDate && endDate <= startDate) return Alert.alert('Invalid time', 'End time must be after start time.');
 
     try {
       const existing = await getLogs(activityType, 200);
