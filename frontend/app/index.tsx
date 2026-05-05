@@ -312,8 +312,10 @@ function TimelineChart({
 }) {
   const scrollRef = useRef<ScrollView>(null);
   const chartWrapRef = useRef<View>(null);
+  const chartBodyRef = useRef<View>(null);
   const [isPinching, setIsPinching] = useState(false);
   const [tooltip, setTooltip] = useState<TooltipState | null>(null);
+  const [crosshairY, setCrosshairY] = useState<number | null>(null);
   const [isFlipped, setIsFlipped] = useState(false);
   const isFlippedRef = useRef(false);
   useEffect(() => { isFlippedRef.current = isFlipped; }, [isFlipped]);
@@ -381,6 +383,22 @@ function TimelineChart({
     };
     document.addEventListener('wheel', handler, { passive: false });
     return () => document.removeEventListener('wheel', handler);
+  }, []);
+
+  // Web: crosshair line tracks mouse Y over the chart body (normal view only)
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const onMove = (e: MouseEvent) => {
+      if (isFlippedRef.current) return;
+      const el = chartBodyRef.current as unknown as HTMLElement;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      if (e.clientX < rect.left || e.clientX > rect.right) { setCrosshairY(null); return; }
+      const y = e.clientY - rect.top;
+      setCrosshairY(y >= 0 && y <= CHART_H ? y : null);
+    };
+    document.addEventListener('mousemove', onMove);
+    return () => document.removeEventListener('mousemove', onMove);
   }, []);
 
   // Native: 2-finger pinch adjusts column width
@@ -569,7 +587,9 @@ function TimelineChart({
         </View>
       ) : (
         // ── Normal: dates = columns (X), time-of-day = rows (Y) ──────────────
+        <View style={{ position: 'relative' }}>
         <View
+          ref={chartBodyRef}
           style={{ flexDirection: 'row' }}
           {...(Platform.OS !== 'web' ? panResponder.panHandlers : {})}
         >
@@ -733,6 +753,32 @@ function TimelineChart({
               })()}
             </Svg>
           </ScrollView>
+        </View>
+        {crosshairY !== null && (
+          <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, right: 0, height: CHART_H }}>
+            <View style={{ position: 'absolute', top: crosshairY - 0.5, left: 0, right: 0, height: 1, backgroundColor: 'rgba(99,102,241,0.45)' }} />
+            <View style={{
+              position: 'absolute',
+              top: Math.max(0, crosshairY - 10),
+              left: 2,
+              backgroundColor: '#6366f1',
+              borderRadius: 3,
+              paddingHorizontal: 4,
+              paddingVertical: 1,
+            }}>
+              <Text style={{ fontSize: 9, color: '#fff', fontWeight: '600' }}>
+                {(() => {
+                  const totalMins = Math.round((crosshairY / CHART_H) * 24 * 60);
+                  const h = Math.min(23, Math.floor(totalMins / 60));
+                  const m = totalMins % 60;
+                  const period = h >= 12 ? 'pm' : 'am';
+                  const dh = h % 12 === 0 ? 12 : h % 12;
+                  return `${dh}:${m.toString().padStart(2, '0')} ${period}`;
+                })()}
+              </Text>
+            </View>
+          </View>
+        )}
         </View>
       )}
     </View>
