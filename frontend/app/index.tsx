@@ -1020,7 +1020,7 @@ function ActivityChart({
   }
 
   const dataPoints = days.filter((d) => d.value !== null);
-  const hasRangeData = dataPoints.length >= 2;
+  const hasRangeData = hasDuration ? dataPoints.length >= 2 : dataPoints.length >= 1;
   const unit = hasDuration ? chartUnit(type) : 'times';
   const chartVals = hasRangeData ? dataPoints.map((d) => toChartValue(type, d.value!)) : [];
   const mean = hasRangeData ? chartVals.reduce((s, v) => s + v, 0) / chartVals.length : 0;
@@ -1040,11 +1040,13 @@ function ActivityChart({
   const meanY = hasRangeData ? yOf(mean) : PT + plotH / 2;
   const baseY = PT + plotH;
 
-  const yTickVals = hasRangeData ? [0, yMax / 2, yMax] : [];
+  const yTickVals = hasRangeData
+    ? hasDuration ? [0, yMax / 2, yMax] : [0, maxVal]
+    : [];
   const formatY = (v: number) => (v % 1 === 0 ? v.toFixed(0) : v.toFixed(1));
 
   const segments: Array<Array<{ x: number; y: number }>> = [];
-  if (hasRangeData) {
+  if (hasDuration && hasRangeData) {
     let seg: Array<{ x: number; y: number }> = [];
     days.forEach((d, i) => {
       if (d.value !== null) {
@@ -1128,7 +1130,8 @@ function ActivityChart({
             <Line x1={0} y1={meanY} x2={totalChartW} y2={meanY}
               stroke="rgba(255,255,255,0.55)" strokeWidth={1} strokeDasharray="4 3" />
 
-            {segments.map((s, si) => {
+            {/* Duration charts: smooth area + line + dots */}
+            {hasDuration && segments.map((s, si) => {
               const curve = smoothCurveD(s);
               const areaD = curve + ` L${s[s.length - 1].x.toFixed(1)},${baseY} L${s[0].x.toFixed(1)},${baseY} Z`;
               return (
@@ -1139,7 +1142,7 @@ function ActivityChart({
               );
             })}
 
-            {days.map((d, i) => {
+            {hasDuration && days.map((d, i) => {
               if (d.value === null) return null;
               const v = toChartValue(type, d.value);
               const selected = tooltip?.idx === i;
@@ -1151,6 +1154,26 @@ function ActivityChart({
                   stroke="#fff" strokeWidth={selected ? 2 : 1.5}
                   onPress={() => setTooltip((prev) => (prev?.idx === i ? null : { idx: i }))}
                 />
+              );
+            })}
+
+            {/* Count charts: lollipop scatterplot */}
+            {!hasDuration && days.map((d, i) => {
+              if (d.value === null) return null;
+              const v = toChartValue(type, d.value);
+              const cx = xOf(i);
+              const cy = yOf(v);
+              const selected = tooltip?.idx === i;
+              return (
+                <G key={i}>
+                  <Line x1={cx} y1={baseY} x2={cx} y2={cy} stroke="rgba(255,255,255,0.55)" strokeWidth={1.5} />
+                  <Circle
+                    cx={cx} cy={cy} r={selected ? 5 : 4}
+                    fill={selected ? '#fff' : 'rgba(255,255,255,0.9)'}
+                    stroke="#fff" strokeWidth={selected ? 2 : 1.5}
+                    onPress={() => setTooltip((prev) => (prev?.idx === i ? null : { idx: i }))}
+                  />
+                </G>
               );
             })}
 
