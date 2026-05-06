@@ -988,6 +988,8 @@ function ActivityChart({
 }) {
   const [tooltip, setTooltip] = useState<{ idx: number } | null>(null);
   const scrollRef = useRef<ScrollView>(null);
+  const [scrollX, setScrollX] = useState(colWidth * numDays); // start at rightmost (today)
+  const [viewportW, setViewportW] = useState(SCREEN_W - 68);  // approx; refined on layout
 
   useEffect(() => {
     scrollRef.current?.scrollToEnd({ animated: false });
@@ -1060,9 +1062,15 @@ function ActivityChart({
   // For quantity/count charts the raw value is already the display value; only duration needs conversion
   const dv = (rawVal: number) => hasDuration ? toChartValue(type, rawVal) : rawVal;
 
-  const chartVals = hasRangeData ? dataPoints.map((d) => dv(d.value!)) : [];
-  const mean = hasRangeData ? chartVals.reduce((s, v) => s + v, 0) / chartVals.length : 0;
-  const meanStr = hasRangeData ? `${mean % 1 === 0 ? mean.toFixed(0) : mean.toFixed(1)} ${unit}` : '';
+  // Mean is scoped to the currently visible window, not all history
+  const maxScrollX = Math.max(0, colWidth * numDays - viewportW);
+  const clampedX = Math.min(scrollX, maxScrollX);
+  const visStartIdx = Math.max(0, Math.floor(clampedX / colWidth));
+  const visEndIdx = Math.min(numDays - 1, Math.ceil((clampedX + viewportW) / colWidth));
+  const windowDataPoints = days.slice(visStartIdx, visEndIdx + 1).filter(d => d.value !== null);
+  const chartVals = windowDataPoints.map(d => dv(d.value!));
+  const mean = chartVals.length > 0 ? chartVals.reduce((s, v) => s + v, 0) / chartVals.length : null;
+  const meanStr = mean !== null ? `${mean % 1 === 0 ? mean.toFixed(0) : mean.toFixed(1)} ${unit}` : '';
 
   // Layout: pinned Y-axis (YW) + scrollable body (colWidth per day)
   const YW = 36;
@@ -1075,7 +1083,7 @@ function ActivityChart({
   const maxVal = hasRangeData ? Math.max(...dataPoints.map((d) => dv(d.value!))) : 1;
   const yMax = maxVal > 0 ? maxVal * 1.15 : 1;
   const yOf = (v: number) => PT + plotH * (1 - v / yMax);
-  const meanY = hasRangeData ? yOf(mean) : PT + plotH / 2;
+  const meanY = mean !== null ? yOf(mean) : null;
   const baseY = PT + plotH;
 
   const yTickVals = hasRangeData
@@ -1113,7 +1121,7 @@ function ActivityChart({
       <TouchableOpacity style={styles.chartHeader} onPress={onToggleCollapsed} activeOpacity={0.7}>
         <View>
           <Text style={styles.chartTitle}>{type.charAt(0).toUpperCase() + type.slice(1)}</Text>
-          {!collapsed && hasRangeData && <Text style={styles.chartMean}>avg {meanStr}</Text>}
+          {!collapsed && meanStr !== '' && <Text style={styles.chartMean}>avg {meanStr}</Text>}
         </View>
         <Ionicons name={collapsed ? 'chevron-down' : 'chevron-up'} size={16} color="#9ca3af" />
       </TouchableOpacity>
@@ -1139,7 +1147,8 @@ function ActivityChart({
           ref={(ref) => { (scrollRef as { current: ScrollView | null }).current = ref; registerScroll(ref); }}
           horizontal
           showsHorizontalScrollIndicator={false}
-          onScroll={(e) => onScrollX(e.nativeEvent.contentOffset.x)}
+          onLayout={(e) => setViewportW(e.nativeEvent.layout.width)}
+          onScroll={(e) => { const x = e.nativeEvent.contentOffset.x; setScrollX(x); onScrollX(x); }}
           scrollEventThrottle={100}
           style={{ flex: 1 }}
         >
@@ -1166,8 +1175,10 @@ function ActivityChart({
               <Line key={i} x1={0} y1={yOf(v)} x2={totalChartW} y2={yOf(v)} stroke="rgba(255,255,255,0.18)" strokeWidth={1} />
             ))}
 
-            <Line x1={0} y1={meanY} x2={totalChartW} y2={meanY}
-              stroke="rgba(255,255,255,0.55)" strokeWidth={1} strokeDasharray="4 3" />
+            {meanY !== null && (
+              <Line x1={0} y1={meanY} x2={totalChartW} y2={meanY}
+                stroke="rgba(255,255,255,0.55)" strokeWidth={1} strokeDasharray="4 3" />
+            )}
 
             {/* Duration/quantity charts: smooth area + line + dots */}
             {(hasDuration || hasQuantity) && segments.map((s, si) => {
