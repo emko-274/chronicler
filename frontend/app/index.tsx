@@ -1017,7 +1017,7 @@ function ActivityChart({
 
   if (byDate.size === 0) {
     return (
-      <View style={styles.chartCard}>
+      <View style={styles.chartPanelItem}>
         <TouchableOpacity style={styles.chartHeader} onPress={onToggleCollapsed} activeOpacity={0.7}>
           <Text style={styles.chartTitle}>
             {type.charAt(0).toUpperCase() + type.slice(1)} — not enough data yet
@@ -1117,7 +1117,7 @@ function ActivityChart({
   const tipY = tooltip !== null ? Math.max(PT + 2, yOf(tipVal!) - 30) : 0;
 
   return (
-    <View style={styles.chartCard}>
+    <View style={styles.chartPanelItem}>
       <TouchableOpacity style={styles.chartHeader} onPress={onToggleCollapsed} activeOpacity={0.7}>
         <View>
           <Text style={styles.chartTitle}>{type.charAt(0).toUpperCase() + type.slice(1)}</Text>
@@ -1600,22 +1600,28 @@ export default function DashboardScreen() {
               registerScroll={(ref) => scrollNodeRefs.current.set('timeline', ref)}
             />
 
-            <View>
-              {charts.map((type) => (
-                <ActivityChart
-                  key={type}
-                  type={type}
-                  logs={logs}
-                  colorPair={colorMap.get(type) ?? TYPE_COLORS[0]}
-                  colWidth={colWidth}
-                  numDays={numDays}
-                  onScrollX={(x) => syncScrollX(x, type)}
-                  registerScroll={(ref) => scrollNodeRefs.current.set(type, ref)}
-                  collapsed={collapsedCharts.has(type)}
-                  onToggleCollapsed={() => toggleChartCollapse(type)}
-                />
-              ))}
-            </View>
+            {charts.length > 0 && (
+              <View style={styles.activityChartsPanel}>
+                {charts.flatMap((type, idx) => {
+                  const chart = (
+                    <ActivityChart
+                      key={type}
+                      type={type}
+                      logs={logs}
+                      colorPair={colorMap.get(type) ?? TYPE_COLORS[0]}
+                      colWidth={colWidth}
+                      numDays={numDays}
+                      onScrollX={(x) => syncScrollX(x, type)}
+                      registerScroll={(ref) => scrollNodeRefs.current.set(type, ref)}
+                      collapsed={collapsedCharts.has(type)}
+                      onToggleCollapsed={() => toggleChartCollapse(type)}
+                    />
+                  );
+                  if (idx === 0) return [chart];
+                  return [<View key={`d-${type}`} style={styles.chartPanelDivider} />, chart];
+                })}
+              </View>
+            )}
 
             {logs.length === 0 && (
               <Text style={styles.empty}>No entries yet. Tap "Log Activity" to get started.</Text>
@@ -1769,6 +1775,24 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 2,
     overflow: 'hidden',
+  },
+  activityChartsPanel: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    marginBottom: 16,
+    shadowColor: '#000',
+    shadowOpacity: 0.06,
+    shadowRadius: 4,
+    elevation: 2,
+    overflow: 'hidden',
+  },
+  chartPanelItem: {
+    padding: 12,
+    overflow: 'hidden',
+  },
+  chartPanelDivider: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: '#e5e7eb',
   },
   chartHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
   chartTitle: { fontSize: 13, fontWeight: '600', color: '#374151' },
