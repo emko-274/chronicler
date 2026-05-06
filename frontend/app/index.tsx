@@ -993,13 +993,24 @@ function ActivityChart({
     scrollRef.current?.scrollToEnd({ animated: false });
   }, []);
 
-  const hasDuration = logs.some((l) => l.activity_type === type && l.duration_minutes != null);
+  const hasDuration = logs.some((l) => l.activity_type === type && l.duration_minutes != null && l.duration_minutes > 0);
+  const hasQuantity = !hasDuration && logs.some((l) => l.activity_type === type && typeof l.extra_data?.quantity === 'number');
   const byDate = new Map<string, number>();
   logs
-    .filter((l) => l.activity_type === type && (hasDuration ? l.duration_minutes != null : true))
+    .filter((l) => {
+      if (l.activity_type !== type) return false;
+      if (hasDuration) return l.duration_minutes != null && l.duration_minutes > 0;
+      if (hasQuantity) return typeof l.extra_data?.quantity === 'number';
+      return true;
+    })
     .forEach((l) => {
       const key = dayKey(new Date(l.started_at));
-      byDate.set(key, (byDate.get(key) ?? 0) + (hasDuration ? l.duration_minutes! : 1));
+      const val = hasDuration
+        ? l.duration_minutes!
+        : hasQuantity
+          ? (l.extra_data!.quantity as number)
+          : 1;
+      byDate.set(key, (byDate.get(key) ?? 0) + val);
     });
 
   if (byDate.size === 0) {
@@ -1027,9 +1038,29 @@ function ActivityChart({
   }
 
   const dataPoints = days.filter((d) => d.value !== null);
-  const hasRangeData = hasDuration ? dataPoints.length >= 2 : dataPoints.length >= 1;
-  const unit = hasDuration ? chartUnit(type) : 'times';
-  const chartVals = hasRangeData ? dataPoints.map((d) => toChartValue(type, d.value!)) : [];
+  const hasRangeData = (hasDuration || hasQuantity) ? dataPoints.length >= 2 : dataPoints.length >= 1;
+
+  // Derive the most-used quantity unit from the logs for this type
+  const derivedQuantityUnit = (() => {
+    if (!hasQuantity) return '';
+    const unitCounts = new Map<string, number>();
+    logs
+      .filter((l) => l.activity_type === type && typeof l.extra_data?.quantity === 'number')
+      .forEach((l) => {
+        const u = String(l.extra_data?.unit ?? '');
+        unitCounts.set(u, (unitCounts.get(u) ?? 0) + 1);
+      });
+    let best = '';
+    let bestCount = 0;
+    unitCounts.forEach((c, u) => { if (c > bestCount) { bestCount = c; best = u; } });
+    return best;
+  })();
+
+  const unit = hasDuration ? chartUnit(type) : hasQuantity ? (derivedQuantityUnit || 'qty') : 'times';
+  // For quantity/count charts the raw value is already the display value; only duration needs conversion
+  const dv = (rawVal: number) => hasDuration ? toChartValue(type, rawVal) : rawVal;
+
+  const chartVals = hasRangeData ? dataPoints.map((d) => dv(d.value!)) : [];
   const mean = hasRangeData ? chartVals.reduce((s, v) => s + v, 0) / chartVals.length : 0;
   const meanStr = hasRangeData ? `${mean % 1 === 0 ? mean.toFixed(0) : mean.toFixed(1)} ${unit}` : '';
 
@@ -1041,23 +1072,23 @@ function ActivityChart({
   const totalChartW = colWidth * numDays;
   const xOf = (i: number) => i * colWidth + colWidth / 2;
 
-  const maxVal = hasRangeData ? Math.max(...dataPoints.map((d) => toChartValue(type, d.value!))) : 1;
+  const maxVal = hasRangeData ? Math.max(...dataPoints.map((d) => dv(d.value!))) : 1;
   const yMax = maxVal > 0 ? maxVal * 1.15 : 1;
   const yOf = (v: number) => PT + plotH * (1 - v / yMax);
   const meanY = hasRangeData ? yOf(mean) : PT + plotH / 2;
   const baseY = PT + plotH;
 
   const yTickVals = hasRangeData
-    ? hasDuration ? [0, yMax / 2, yMax] : [0, maxVal]
+    ? (hasDuration || hasQuantity) ? [0, yMax / 2, yMax] : [0, maxVal]
     : [];
   const formatY = (v: number) => (v % 1 === 0 ? v.toFixed(0) : v.toFixed(1));
 
   const segments: Array<Array<{ x: number; y: number }>> = [];
-  if (hasDuration && hasRangeData) {
+  if ((hasDuration || hasQuantity) && hasRangeData) {
     let seg: Array<{ x: number; y: number }> = [];
     days.forEach((d, i) => {
       if (d.value !== null) {
-        seg.push({ x: xOf(i), y: yOf(toChartValue(type, d.value)) });
+        seg.push({ x: xOf(i), y: yOf(dv(d.value)) });
       } else if (seg.length > 0) {
         segments.push(seg);
         seg = [];
@@ -1070,7 +1101,7 @@ function ActivityChart({
   const dotR = Math.max(1.5, Math.min(4, colWidth / 2 - 1));
 
   const tipDay = tooltip !== null ? days[tooltip.idx] : null;
-  const tipVal = tipDay?.value != null ? toChartValue(type, tipDay.value) : null;
+  const tipVal = tipDay?.value != null ? dv(tipDay.value) : null;
   const TIP_W = 68;
   const tipX = tooltip !== null
     ? Math.max(2, Math.min(xOf(tooltip.idx) - TIP_W / 2, totalChartW - TIP_W - 2))
@@ -1138,8 +1169,8 @@ function ActivityChart({
             <Line x1={0} y1={meanY} x2={totalChartW} y2={meanY}
               stroke="rgba(255,255,255,0.55)" strokeWidth={1} strokeDasharray="4 3" />
 
-            {/* Duration charts: smooth area + line + dots */}
-            {hasDuration && segments.map((s, si) => {
+            {/* Duration/quantity charts: smooth area + line + dots */}
+            {(hasDuration || hasQuantity) && segments.map((s, si) => {
               const curve = smoothCurveD(s);
               const areaD = curve + ` L${s[s.length - 1].x.toFixed(1)},${baseY} L${s[0].x.toFixed(1)},${baseY} Z`;
               return (
@@ -1150,9 +1181,9 @@ function ActivityChart({
               );
             })}
 
-            {hasDuration && days.map((d, i) => {
+            {(hasDuration || hasQuantity) && days.map((d, i) => {
               if (d.value === null) return null;
-              const v = toChartValue(type, d.value);
+              const v = dv(d.value);
               const selected = tooltip?.idx === i;
               return (
                 <Circle
@@ -1166,9 +1197,9 @@ function ActivityChart({
             })}
 
             {/* Count charts: lollipop scatterplot */}
-            {!hasDuration && days.map((d, i) => {
+            {!hasDuration && !hasQuantity && days.map((d, i) => {
               if (d.value === null) return null;
-              const v = toChartValue(type, d.value);
+              const v = dv(d.value);
               const cx = xOf(i);
               const cy = yOf(v);
               const selected = tooltip?.idx === i;
@@ -1292,7 +1323,13 @@ function LogItem({
           ) : null}
         </View>
         <View style={styles.logRowRight}>
-          <Text style={styles.duration}>{formatDuration(log.duration_minutes)}</Text>
+          {log.extra_data?.quantity != null ? (
+            <Text style={styles.duration}>
+              {`${Number(log.extra_data.quantity) % 1 === 0 ? Number(log.extra_data.quantity).toFixed(0) : Number(log.extra_data.quantity).toFixed(1)}${log.extra_data.unit ? ` ${log.extra_data.unit}` : ''}`}
+            </Text>
+          ) : (
+            <Text style={styles.duration}>{formatDuration(log.duration_minutes)}</Text>
+          )}
           <TouchableOpacity onPress={confirmDelete} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
             <Ionicons name="trash-outline" size={15} color="#d1d5db" />
           </TouchableOpacity>

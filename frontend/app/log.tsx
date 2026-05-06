@@ -111,6 +111,8 @@ export default function LogScreen() {
   const [endDate, setEndDate] = useState<Date | null>(null);
   const [hasEnd, setHasEnd] = useState(false);
   const [notes, setNotes] = useState('');
+  const [quantityText, setQuantityText] = useState('');
+  const [quantityUnit, setQuantityUnit] = useState('');
   const [saving, setSaving] = useState(false);
   const [picker, setPicker] = useState<PickerState>(null);
 
@@ -214,12 +216,15 @@ export default function LogScreen() {
           started_at: zeroDate.toISOString(),
           ended_at: zeroDate.toISOString(),
           notes: notes.trim() || undefined,
+          extra_data: quantityText.trim() ? { quantity: parseFloat(quantityText), unit: quantityUnit.trim() } : undefined,
         });
         Alert.alert('Saved!', 'Your activity has been logged.');
         setActivityType('');
         setIsDurationZero(false);
         setZeroDate(new Date());
         setNotes('');
+        setQuantityText('');
+        setQuantityUnit('');
       } catch {
         Alert.alert('Error', 'Could not save. Is the backend running?');
       } finally {
@@ -271,6 +276,7 @@ export default function LogScreen() {
         started_at: startDate.toISOString(),
         ended_at: hasEnd ? endDate?.toISOString() : undefined,
         notes: notes.trim() || undefined,
+        extra_data: quantityText.trim() ? { quantity: parseFloat(quantityText), unit: quantityUnit.trim() } : undefined,
       });
       Alert.alert('Saved!', 'Your activity has been logged.');
       setActivityType('');
@@ -278,6 +284,8 @@ export default function LogScreen() {
       setEndDate(null);
       setHasEnd(false);
       setNotes('');
+      setQuantityText('');
+      setQuantityUnit('');
     } catch {
       Alert.alert('Error', 'Could not save. Is the backend running?');
     } finally {
@@ -424,6 +432,39 @@ export default function LogScreen() {
         </>
       )}
 
+      {/* ── Quantity ── */}
+      <Text style={styles.label}>Quantity (optional)</Text>
+      <View style={styles.quantityRow}>
+        <TextInput
+          style={[styles.input, styles.quantityInput]}
+          placeholder="Amount"
+          placeholderTextColor="#9ca3af"
+          value={quantityText}
+          onChangeText={setQuantityText}
+          keyboardType="decimal-pad"
+        />
+        <TextInput
+          style={[styles.input, styles.unitInput]}
+          placeholder="Unit"
+          placeholderTextColor="#9ca3af"
+          value={quantityUnit}
+          onChangeText={setQuantityUnit}
+          autoCapitalize="none"
+          autoCorrect={false}
+        />
+      </View>
+      <View style={styles.unitChips}>
+        {['mg', 'g', 'ml', 'L', 'tablets', 'capsules', 'cups', 'oz'].map((u) => (
+          <TouchableOpacity
+            key={u}
+            style={[styles.unitChip, quantityUnit === u && styles.unitChipOn]}
+            onPress={() => setQuantityUnit((prev) => (prev === u ? '' : u))}
+          >
+            <Text style={[styles.unitChipText, quantityUnit === u && styles.unitChipTextOn]}>{u}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+
       {/* ── Notes ── */}
       <Text style={styles.label}>Notes (optional)</Text>
       <TextInput
@@ -532,6 +573,19 @@ const styles = StyleSheet.create({
   toggleText: { fontSize: 13, color: '#6366f1', fontWeight: '600' },
   saveBtn: { backgroundColor: '#6366f1', padding: 16, borderRadius: 10, alignItems: 'center', marginTop: 28 },
   saveBtnText: { color: '#fff', fontSize: 16, fontWeight: '700' },
+
+  // Quantity input
+  quantityRow: { flexDirection: 'row', gap: 8 },
+  quantityInput: { flex: 2 },
+  unitInput: { flex: 1 },
+  unitChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 8 },
+  unitChip: {
+    paddingHorizontal: 10, paddingVertical: 5, borderRadius: 16,
+    backgroundColor: '#f3f4f6', borderWidth: 1, borderColor: '#e5e7eb',
+  },
+  unitChipOn: { backgroundColor: '#6366f1', borderColor: '#6366f1' },
+  unitChipText: { fontSize: 12, color: '#6b7280', fontWeight: '500' },
+  unitChipTextOn: { color: '#fff' },
 
   // Timed / 0 min segmented control
   segmentedRow: {
