@@ -305,11 +305,27 @@ function TimelineChart({
   colorMap,
   visibleTypes,
   onEdit,
+  colWidth,
+  setColWidth,
+  numDays,
+  setNumDays,
+  colWidthRef,
+  numDaysRef,
+  onScrollX,
+  registerScroll,
 }: {
   logs: ActivityLog[];
   colorMap: Map<string, string[]>;
   visibleTypes: Set<string>;
   onEdit: (log: ActivityLog) => void;
+  colWidth: number;
+  setColWidth: (v: number | ((prev: number) => number)) => void;
+  numDays: number;
+  setNumDays: (v: number | ((prev: number) => number)) => void;
+  colWidthRef: { current: number };
+  numDaysRef: { current: number };
+  onScrollX: (x: number) => void;
+  registerScroll: (ref: ScrollView | null) => void;
 }) {
   const scrollRef = useRef<ScrollView>(null);
   const chartWrapRef = useRef<View>(null);
@@ -329,15 +345,7 @@ function TimelineChart({
   const [flippedW, setFlippedW] = useState(SCREEN_W - 94);
   const scrollYRef = useRef(0);
 
-  // colWidth = zoom level (wider = more detail, fewer days on screen)
-  const [colWidth, setColWidth] = useState(DEFAULT_COL_W);
-  const colWidthRef = useRef(DEFAULT_COL_W);
-  useEffect(() => { colWidthRef.current = colWidth; }, [colWidth]);
-
-  // numDays = how far back history is loaded (grows as user scrolls left)
-  const [numDays, setNumDays] = useState(DEFAULT_HISTORY);
-  const numDaysRef = useRef(DEFAULT_HISTORY);
-  useEffect(() => { numDaysRef.current = numDays; }, [numDays]);
+  // colWidth and numDays are lifted to DashboardScreen and passed as props
 
   // Scroll to today on initial mount
   useEffect(() => {
@@ -353,7 +361,9 @@ function TimelineChart({
     if (pendingCompensation.current > 0) {
       const comp = pendingCompensation.current;
       pendingCompensation.current = 0;
-      scrollRef.current?.scrollTo({ x: scrollXRef.current + comp, animated: false });
+      const newX = scrollXRef.current + comp;
+      scrollRef.current?.scrollTo({ x: newX, animated: false });
+      onScrollX(newX);
       isExtending.current = false;
     }
   }, [numDays]);
@@ -374,6 +384,7 @@ function TimelineChart({
     const x = e.nativeEvent.contentOffset.x;
     scrollXRef.current = x;
     setScrollXSnap(x);
+    onScrollX(x);
     const threshold = colWidthRef.current * 14;
     if (x < threshold && !isExtending.current) {
       isExtending.current = true;
@@ -732,7 +743,7 @@ function TimelineChart({
           </Svg>
 
           <ScrollView
-            ref={scrollRef}
+            ref={(ref) => { (scrollRef as { current: ScrollView | null }).current = ref; registerScroll(ref); }}
             horizontal
             showsHorizontalScrollIndicator={false}
             scrollEnabled={!isPinching}
@@ -935,8 +946,6 @@ function TimelineChart({
 
 // ── Per-type chart ─────────────────────────────────────────────────────────
 
-const AC_WINDOW_STEPS = [7, 14, 30, 60, 90];
-
 // Catmull-Rom → cubic Bezier smooth path through an array of {x, y} points
 function smoothCurveD(pts: Array<{ x: number; y: number }>): string {
   if (pts.length === 0) return '';
@@ -960,76 +969,25 @@ function ActivityChart({
   type,
   logs,
   colorPair,
-  stepIdx,
-  setStepIdx,
-  offsetDays,
-  setOffsetDays,
-  acXStepRef,
+  colWidth,
+  numDays,
+  onScrollX,
+  registerScroll,
 }: {
   type: string;
   logs: ActivityLog[];
   colorPair: string[];
-  stepIdx: number;
-  setStepIdx: (v: number | ((prev: number) => number)) => void;
-  offsetDays: number;
-  setOffsetDays: (v: number | ((prev: number) => number)) => void;
-  acXStepRef: { current: number };
+  colWidth: number;
+  numDays: number;
+  onScrollX: (x: number) => void;
+  registerScroll: (ref: ScrollView | null) => void;
 }) {
   const [tooltip, setTooltip] = useState<{ idx: number } | null>(null);
+  const scrollRef = useRef<ScrollView>(null);
 
-  const offsetRef = useRef(0);
-  const dragBase = useRef(0);
-  const stepIdxRef = useRef(1);
-  const pinchState = useRef<{ initialDistance: number; initialStepIdx: number } | null>(null);
-
-  useEffect(() => { stepIdxRef.current = stepIdx; }, [stepIdx]);
-  useEffect(() => { offsetRef.current = offsetDays; }, [offsetDays]);
-
-  function setOffset(v: number) {
-    offsetRef.current = v;
-    setOffsetDays(v);
-  }
-
-  // Native-only: single-finger pan + two-finger pinch-to-zoom
-  const pan = useRef(
-    PanResponder.create({
-      onStartShouldSetPanResponderCapture: (evt) => evt.nativeEvent.touches.length === 2,
-      onMoveShouldSetPanResponderCapture: (evt) => evt.nativeEvent.touches.length === 2,
-      onMoveShouldSetPanResponder: (_, { dx, dy }) =>
-        Math.abs(dx) > 6 && Math.abs(dx) > Math.abs(dy) * 1.5,
-      onPanResponderGrant: (evt) => {
-        if (evt.nativeEvent.touches.length === 2) {
-          const [t0, t1] = evt.nativeEvent.touches;
-          pinchState.current = {
-            initialDistance: Math.hypot(t1.pageX - t0.pageX, t1.pageY - t0.pageY),
-            initialStepIdx: stepIdxRef.current,
-          };
-        } else {
-          dragBase.current = offsetRef.current;
-        }
-      },
-      onPanResponderMove: (evt, { dx }) => {
-        if (evt.nativeEvent.touches.length === 2 && pinchState.current) {
-          const [t0, t1] = evt.nativeEvent.touches;
-          const dist = Math.hypot(t1.pageX - t0.pageX, t1.pageY - t0.pageY);
-          const scale = dist / pinchState.current.initialDistance;
-          const targetWindow = AC_WINDOW_STEPS[pinchState.current.initialStepIdx] / scale;
-          let newIdx = pinchState.current.initialStepIdx;
-          let minDiff = Infinity;
-          AC_WINDOW_STEPS.forEach((w, i) => {
-            const diff = Math.abs(w - targetWindow);
-            if (diff < minDiff) { minDiff = diff; newIdx = i; }
-          });
-          setStepIdx(newIdx);
-        } else {
-          const delta = Math.round(-dx / Math.max(acXStepRef.current, 1));
-          setOffset(Math.min(365, Math.max(0, dragBase.current + delta)));
-        }
-      },
-      onPanResponderRelease: () => { pinchState.current = null; },
-      onPanResponderTerminate: () => { pinchState.current = null; },
-    })
-  ).current;
+  useEffect(() => {
+    scrollRef.current?.scrollToEnd({ animated: false });
+  }, []);
 
   const hasDuration = logs.some((l) => l.activity_type === type && l.duration_minutes != null);
   const byDate = new Map<string, number>();
@@ -1040,21 +998,6 @@ function ActivityChart({
       byDate.set(key, (byDate.get(key) ?? 0) + (hasDuration ? l.duration_minutes! : 1));
     });
 
-  const windowSize = AC_WINDOW_STEPS[stepIdx];
-  const today = new Date();
-  const clampedOffset = offsetDays;
-
-  const days: Array<{ key: string; value: number | null }> = [];
-  for (let i = windowSize - 1; i >= 0; i--) {
-    const d = new Date(today);
-    d.setDate(today.getDate() - clampedOffset - i);
-    const key = dayKey(d);
-    days.push({ key, value: byDate.get(key) ?? null });
-  }
-
-  const dataPoints = days.filter((d) => d.value !== null);
-
-  // Only hide the chart entirely when no data has ever been logged for this type
   if (byDate.size === 0) {
     return (
       <View style={styles.chartCard}>
@@ -1066,30 +1009,39 @@ function ActivityChart({
     );
   }
 
+  // Same day range as the timeline (oldest → newest)
+  const today = new Date();
+  const days: Array<{ key: string; value: number | null }> = [];
+  for (let i = numDays - 1; i >= 0; i--) {
+    const d = new Date(today);
+    d.setDate(today.getDate() - i);
+    const key = dayKey(d);
+    days.push({ key, value: byDate.get(key) ?? null });
+  }
+
+  const dataPoints = days.filter((d) => d.value !== null);
   const hasRangeData = dataPoints.length >= 2;
   const unit = hasDuration ? chartUnit(type) : 'times';
   const chartVals = hasRangeData ? dataPoints.map((d) => toChartValue(type, d.value!)) : [];
   const mean = hasRangeData ? chartVals.reduce((s, v) => s + v, 0) / chartVals.length : 0;
   const meanStr = hasRangeData ? `${mean % 1 === 0 ? mean.toFixed(0) : mean.toFixed(1)} ${unit}` : '';
 
-  // SVG layout
-  const SVG_W = SCREEN_W - 32;
+  // Layout: pinned Y-axis (YW) + scrollable body (colWidth per day)
+  const YW = 36;
   const SVG_H = 160;
-  const PL = 36;
-  const PR = 8;
-  const PT = 14;
-  const PB = 22;
-  const plotW = SVG_W - PL - PR;
+  const PT = 14, PB = 22;
   const plotH = SVG_H - PT - PB;
-  const n = days.length;
-  const xStep = n > 1 ? plotW / (n - 1) : plotW;
-  const xOf = (i: number) => PL + i * xStep;
+  const totalChartW = colWidth * numDays;
+  const xOf = (i: number) => i * colWidth + colWidth / 2;
 
   const maxVal = hasRangeData ? Math.max(...dataPoints.map((d) => toChartValue(type, d.value!))) : 1;
   const yMax = maxVal > 0 ? maxVal * 1.15 : 1;
   const yOf = (v: number) => PT + plotH * (1 - v / yMax);
   const meanY = hasRangeData ? yOf(mean) : PT + plotH / 2;
   const baseY = PT + plotH;
+
+  const yTickVals = hasRangeData ? [0, yMax / 2, yMax] : [];
+  const formatY = (v: number) => (v % 1 === 0 ? v.toFixed(0) : v.toFixed(1));
 
   const segments: Array<Array<{ x: number; y: number }>> = [];
   if (hasRangeData) {
@@ -1105,146 +1057,122 @@ function ActivityChart({
     if (seg.length > 0) segments.push(seg);
   }
 
-  const labelEvery = n <= 7 ? 1 : n <= 14 ? 2 : Math.ceil(n / 7);
-  const yTickVals = hasRangeData ? [0, yMax / 2, yMax] : [];
-  const formatY = (v: number) => (v % 1 === 0 ? v.toFixed(0) : v.toFixed(1));
+  const labelEvery = colWidth < 10 ? 14 : colWidth < 20 ? 7 : 1;
+  const dotR = Math.max(1.5, Math.min(4, colWidth / 2 - 1));
 
   const tipDay = tooltip !== null ? days[tooltip.idx] : null;
   const tipVal = tipDay?.value != null ? toChartValue(type, tipDay.value) : null;
   const TIP_W = 68;
   const tipX = tooltip !== null
-    ? Math.max(PL + 2, Math.min(xOf(tooltip.idx) - TIP_W / 2, SVG_W - PR - TIP_W - 2))
+    ? Math.max(2, Math.min(xOf(tooltip.idx) - TIP_W / 2, totalChartW - TIP_W - 2))
     : 0;
   const tipY = tooltip !== null ? Math.max(PT + 2, yOf(tipVal!) - 30) : 0;
-
-  const windowEnd = days[days.length - 1].key;
-  const windowStart = days[0].key;
-  const titleStr = clampedOffset === 0
-    ? `${type.charAt(0).toUpperCase() + type.slice(1)} — last ${windowSize} days`
-    : `${type.charAt(0).toUpperCase() + type.slice(1)} — `
-      + `${new Date(windowStart + 'T12:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`
-      + ` – ${new Date(windowEnd + 'T12:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`;
 
   return (
     <View style={styles.chartCard}>
       <View style={styles.chartHeader}>
         <View>
-          <Text style={styles.chartTitle}>{titleStr}</Text>
+          <Text style={styles.chartTitle}>{type.charAt(0).toUpperCase() + type.slice(1)}</Text>
           {hasRangeData && <Text style={styles.chartMean}>avg {meanStr}</Text>}
         </View>
-        <View style={styles.zoomRow}>
-          {clampedOffset > 0 && (
-            <TouchableOpacity
-              style={[styles.zoomBtn, styles.zoomBtnToday]}
-              onPress={() => { setOffset(0); setTooltip(null); }}
-            >
-              <Text style={[styles.zoomBtnText, styles.zoomBtnTodayText]}>Today</Text>
-            </TouchableOpacity>
-          )}
-          <TouchableOpacity
-            style={[styles.zoomBtn, stepIdx === 0 && styles.zoomBtnDisabled]}
-            onPress={() => { setStepIdx((i) => Math.max(0, i - 1)); setOffset(0); setTooltip(null); }}
-            disabled={stepIdx === 0}
-          >
-            <Text style={styles.zoomBtnText}>+</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.zoomBtn, stepIdx === AC_WINDOW_STEPS.length - 1 && styles.zoomBtnDisabled]}
-            onPress={() => { setStepIdx((i) => Math.min(AC_WINDOW_STEPS.length - 1, i + 1)); setOffset(0); setTooltip(null); }}
-            disabled={stepIdx === AC_WINDOW_STEPS.length - 1}
-          >
-            <Text style={styles.zoomBtnText}>−</Text>
-          </TouchableOpacity>
-        </View>
       </View>
-      <View {...(Platform.OS !== 'web' ? pan.panHandlers : {})} style={Platform.OS === 'web' ? { cursor: 'ew-resize' } as any : undefined}>
-      <Svg width={SVG_W} height={SVG_H} style={{ borderRadius: 10, overflow: 'hidden' }}>
-        <Defs>
-          <LinearGradient id={`bg_${type}`} x1="0" y1="0" x2="1" y2="1">
-            <Stop offset="0" stopColor={colorPair[0]} stopOpacity="1" />
-            <Stop offset="1" stopColor={colorPair[1]} stopOpacity="1" />
-          </LinearGradient>
-          <LinearGradient id={`fill_${type}`} x1="0" y1={PT} x2="0" y2={baseY} gradientUnits="userSpaceOnUse">
-            <Stop offset="0" stopColor="#fff" stopOpacity="0.30" />
-            <Stop offset="1" stopColor="#fff" stopOpacity="0.03" />
-          </LinearGradient>
-        </Defs>
-        <Rect x={0} y={0} width={SVG_W} height={SVG_H} fill={`url(#bg_${type})`} rx={10} />
+      <View style={{ flexDirection: 'row' }}>
+        {/* Pinned Y-axis */}
+        <Svg width={YW} height={SVG_H}>
+          <Defs>
+            <LinearGradient id={`yax_${type}`} x1="0" y1="0" x2="1" y2="1">
+              <Stop offset="0" stopColor={colorPair[0]} stopOpacity="1" />
+              <Stop offset="1" stopColor={colorPair[1]} stopOpacity="1" />
+            </LinearGradient>
+          </Defs>
+          <Rect x={0} y={0} width={YW} height={SVG_H} fill={`url(#yax_${type})`} />
+          {yTickVals.map((v, i) => (
+            <SvgText key={i} x={YW - 4} y={yOf(v) + 4} fontSize={9} fill="rgba(255,255,255,0.75)" textAnchor="end">
+              {formatY(v)}
+            </SvgText>
+          ))}
+        </Svg>
 
-        {!hasRangeData && (
-          <SvgText x={SVG_W / 2} y={SVG_H / 2 + 5} fontSize={12} fill="rgba(255,255,255,0.6)" textAnchor="middle">
-            No data in this range
-          </SvgText>
-        )}
+        {/* Scrollable chart body — same colWidth per day as the timeline */}
+        <ScrollView
+          ref={(ref) => { (scrollRef as { current: ScrollView | null }).current = ref; registerScroll(ref); }}
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          onScroll={(e) => onScrollX(e.nativeEvent.contentOffset.x)}
+          scrollEventThrottle={100}
+          style={{ flex: 1 }}
+        >
+          <Svg width={totalChartW} height={SVG_H}>
+            <Defs>
+              <LinearGradient id={`bg_${type}`} x1="0" y1="0" x2="1" y2="1">
+                <Stop offset="0" stopColor={colorPair[0]} stopOpacity="1" />
+                <Stop offset="1" stopColor={colorPair[1]} stopOpacity="1" />
+              </LinearGradient>
+              <LinearGradient id={`fill_${type}`} x1="0" y1={PT} x2="0" y2={baseY} gradientUnits="userSpaceOnUse">
+                <Stop offset="0" stopColor="#fff" stopOpacity="0.30" />
+                <Stop offset="1" stopColor="#fff" stopOpacity="0.03" />
+              </LinearGradient>
+            </Defs>
+            <Rect x={0} y={0} width={totalChartW} height={SVG_H} fill={`url(#bg_${type})`} />
 
-        {/* Y-axis grid lines and labels */}
-        {yTickVals.map((v, i) => {
-          const y = yOf(v);
-          return (
-            <G key={i}>
-              <Line x1={PL} y1={y} x2={SVG_W - PR} y2={y} stroke="rgba(255,255,255,0.18)" strokeWidth={1} />
-              <SvgText x={PL - 4} y={y + 4} fontSize={9} fill="rgba(255,255,255,0.75)" textAnchor="end">
-                {formatY(v)}
+            {!hasRangeData && (
+              <SvgText x={totalChartW / 2} y={SVG_H / 2 + 5} fontSize={12} fill="rgba(255,255,255,0.6)" textAnchor="middle">
+                No data in this range
               </SvgText>
-            </G>
-          );
-        })}
+            )}
 
-        {/* Mean reference line */}
-        <Line
-          x1={PL} y1={meanY} x2={SVG_W - PR} y2={meanY}
-          stroke="rgba(255,255,255,0.55)" strokeWidth={1} strokeDasharray="4 3"
-        />
+            {yTickVals.map((v, i) => (
+              <Line key={i} x1={0} y1={yOf(v)} x2={totalChartW} y2={yOf(v)} stroke="rgba(255,255,255,0.18)" strokeWidth={1} />
+            ))}
 
-        {/* Area fill + smooth stroke per contiguous segment */}
-        {segments.map((s, si) => {
-          const curve = smoothCurveD(s);
-          const areaD = curve + ` L${s[s.length - 1].x.toFixed(1)},${baseY} L${s[0].x.toFixed(1)},${baseY} Z`;
-          return (
-            <G key={si}>
-              <Path d={areaD} fill={`url(#fill_${type})`} stroke="none" />
-              <Path d={curve} stroke="rgba(255,255,255,0.9)" strokeWidth={2} fill="none" strokeLinecap="round" strokeLinejoin="round" />
-            </G>
-          );
-        })}
+            <Line x1={0} y1={meanY} x2={totalChartW} y2={meanY}
+              stroke="rgba(255,255,255,0.55)" strokeWidth={1} strokeDasharray="4 3" />
 
-        {/* Dots — only on days with data */}
-        {days.map((d, i) => {
-          if (d.value === null) return null;
-          const v = toChartValue(type, d.value);
-          const selected = tooltip?.idx === i;
-          return (
-            <Circle
-              key={i}
-              cx={xOf(i)} cy={yOf(v)} r={selected ? 5 : 4}
-              fill={selected ? '#fff' : 'rgba(255,255,255,0.85)'}
-              stroke="#fff" strokeWidth={selected ? 2 : 1.5}
-              onPress={() => setTooltip((prev) => (prev?.idx === i ? null : { idx: i }))}
-            />
-          );
-        })}
+            {segments.map((s, si) => {
+              const curve = smoothCurveD(s);
+              const areaD = curve + ` L${s[s.length - 1].x.toFixed(1)},${baseY} L${s[0].x.toFixed(1)},${baseY} Z`;
+              return (
+                <G key={si}>
+                  <Path d={areaD} fill={`url(#fill_${type})`} stroke="none" />
+                  <Path d={curve} stroke="rgba(255,255,255,0.9)" strokeWidth={2} fill="none" strokeLinecap="round" strokeLinejoin="round" />
+                </G>
+              );
+            })}
 
-        {/* X-axis date labels, evenly spaced by calendar position */}
-        {days.map((d, i) => {
-          if (i % labelEvery !== 0) return null;
-          const label = new Date(d.key + 'T12:00:00').toLocaleDateString(undefined, { month: 'numeric', day: 'numeric' });
-          return (
-            <SvgText key={i} x={xOf(i)} y={SVG_H - 5} fontSize={9} fill="rgba(255,255,255,0.8)" textAnchor="middle">
-              {label}
-            </SvgText>
-          );
-        })}
+            {days.map((d, i) => {
+              if (d.value === null) return null;
+              const v = toChartValue(type, d.value);
+              const selected = tooltip?.idx === i;
+              return (
+                <Circle
+                  key={i}
+                  cx={xOf(i)} cy={yOf(v)} r={selected ? dotR + 1 : dotR}
+                  fill={selected ? '#fff' : 'rgba(255,255,255,0.85)'}
+                  stroke="#fff" strokeWidth={selected ? 2 : 1.5}
+                  onPress={() => setTooltip((prev) => (prev?.idx === i ? null : { idx: i }))}
+                />
+              );
+            })}
 
-        {/* Tooltip bubble */}
-        {tooltip !== null && tipVal !== null && (
-          <G>
-            <Rect x={tipX} y={tipY} width={TIP_W} height={22} rx={5} fill="#1f2937" />
-            <SvgText x={tipX + TIP_W / 2} y={tipY + 14} fontSize={11} fontWeight="700" fill="#fff" textAnchor="middle">
-              {`${tipVal % 1 === 0 ? tipVal.toFixed(0) : tipVal.toFixed(1)} ${unit}`}
-            </SvgText>
-          </G>
-        )}
-      </Svg>
+            {days.map((d, i) => {
+              if (i % labelEvery !== 0) return null;
+              return (
+                <SvgText key={i} x={xOf(i)} y={SVG_H - 5} fontSize={9} fill="rgba(255,255,255,0.8)" textAnchor="middle">
+                  {new Date(d.key + 'T12:00:00').toLocaleDateString(undefined, { month: 'numeric', day: 'numeric' })}
+                </SvgText>
+              );
+            })}
+
+            {tooltip !== null && tipVal !== null && (
+              <G>
+                <Rect x={tipX} y={tipY} width={TIP_W} height={22} rx={5} fill="#1f2937" />
+                <SvgText x={tipX + TIP_W / 2} y={tipY + 14} fontSize={11} fontWeight="700" fill="#fff" textAnchor="middle">
+                  {`${tipVal % 1 === 0 ? tipVal.toFixed(0) : tipVal.toFixed(1)} ${unit}`}
+                </SvgText>
+              </G>
+            )}
+          </Svg>
+        </ScrollView>
       </View>
     </View>
   );
@@ -1443,59 +1371,34 @@ export default function DashboardScreen() {
   const [loading, setLoading] = useState(true);
   const [visibleTypes, setVisibleTypes] = useState<Set<string>>(new Set());
   const [editingLog, setEditingLog] = useState<ActivityLog | null>(null);
-  const [acStepIdx, setAcStepIdx] = useState(1);
-  const [acOffsetDays, setAcOffsetDays] = useState(0);
-  const acOffsetRef = useRef(0);
-  const acXStepRef = useRef(1);
-  const acWheelAccum = useRef(0);
-  const acZoomAccum = useRef(0);
-  const acContainerRef = useRef<View>(null);
-  acOffsetRef.current = acOffsetDays;
-  // Keep xStep in sync for gesture handler (same formula as ActivityChart)
-  { const ws = AC_WINDOW_STEPS[acStepIdx]; const pw = (SCREEN_W - 32) - 36 - 8; acXStepRef.current = ws > 1 ? pw / (ws - 1) : pw; }
 
-  useEffect(() => {
-    if (Platform.OS !== 'web') return;
-    const onDown = (e: MouseEvent) => {
-      const el = acContainerRef.current as unknown as HTMLElement;
-      if (!el?.contains(e.target as Node)) return;
-      const startX = e.clientX;
-      const startOffset = acOffsetRef.current;
-      const onMove = (ev: MouseEvent) => {
-        const delta = Math.round(-(ev.clientX - startX) / Math.max(acXStepRef.current, 1));
-        const next = Math.min(365, Math.max(0, startOffset + delta));
-        acOffsetRef.current = next;
-        setAcOffsetDays(next);
-      };
-      const onUp = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
-      document.addEventListener('mousemove', onMove);
-      document.addEventListener('mouseup', onUp);
-    };
-    document.addEventListener('mousedown', onDown, true);
-    const onWheel = (e: WheelEvent) => {
-      const el = acContainerRef.current as unknown as HTMLElement;
-      if (!el?.contains(e.target as Node)) return;
-      e.preventDefault();
-      if (e.ctrlKey) {
-        acZoomAccum.current += e.deltaY;
-        if (Math.abs(acZoomAccum.current) > 25) {
-          const dir = acZoomAccum.current; acZoomAccum.current = 0;
-          setAcStepIdx(i => dir > 0 ? Math.min(AC_WINDOW_STEPS.length - 1, i + 1) : Math.max(0, i - 1));
-        }
-        return;
-      }
-      const delta = e.deltaX !== 0 ? e.deltaX : e.deltaY;
-      acWheelAccum.current += delta / 20;
-      const days = Math.round(acWheelAccum.current);
-      if (days !== 0) {
-        acWheelAccum.current -= days;
-        const next = Math.min(365, Math.max(0, acOffsetRef.current + days));
-        acOffsetRef.current = next;
-        setAcOffsetDays(next);
-      }
-    };
-    document.addEventListener('wheel', onWheel, { passive: false });
-    return () => { document.removeEventListener('mousedown', onDown, true); document.removeEventListener('wheel', onWheel); };
+  // Shared timeline state lifted here so all charts use the same scale + history
+  const [colWidth, setColWidth] = useState(DEFAULT_COL_W);
+  const [numDays, setNumDays] = useState(DEFAULT_HISTORY);
+  const colWidthRef = useRef(DEFAULT_COL_W);
+  const numDaysRef = useRef(DEFAULT_HISTORY);
+  useEffect(() => { colWidthRef.current = colWidth; }, [colWidth]);
+  useEffect(() => { numDaysRef.current = numDays; }, [numDays]);
+
+  // Scroll sync: all chart ScrollViews are registered here by key
+  const scrollNodeRefs = useRef<Map<string, ScrollView | null>>(new Map());
+  const isSyncingScroll = useRef(false);
+
+  const syncScrollX = useCallback((x: number, sourceKey: string) => {
+    if (Platform.OS === 'web') {
+      scrollNodeRefs.current.forEach((ref, key) => {
+        if (key === sourceKey || !ref) return;
+        (ref as unknown as HTMLElement).scrollLeft = x;
+      });
+    } else {
+      if (isSyncingScroll.current) return;
+      isSyncingScroll.current = true;
+      scrollNodeRefs.current.forEach((ref, key) => {
+        if (key === sourceKey || !ref) return;
+        (ref as ScrollView).scrollTo({ x, animated: false });
+      });
+      setTimeout(() => { isSyncingScroll.current = false; }, 50);
+    }
   }, []);
 
   const [logPage, setLogPage] = useState(0);
@@ -1599,20 +1502,27 @@ export default function DashboardScreen() {
               colorMap={colorMap}
               visibleTypes={visibleTypes}
               onEdit={setEditingLog}
+              colWidth={colWidth}
+              setColWidth={setColWidth}
+              numDays={numDays}
+              setNumDays={setNumDays}
+              colWidthRef={colWidthRef}
+              numDaysRef={numDaysRef}
+              onScrollX={(x) => syncScrollX(x, 'timeline')}
+              registerScroll={(ref) => scrollNodeRefs.current.set('timeline', ref)}
             />
 
-            <View ref={acContainerRef}>
+            <View>
               {charts.map((type) => (
                 <ActivityChart
                   key={type}
                   type={type}
                   logs={logs}
                   colorPair={colorMap.get(type) ?? TYPE_COLORS[0]}
-                  stepIdx={acStepIdx}
-                  setStepIdx={setAcStepIdx}
-                  offsetDays={acOffsetDays}
-                  setOffsetDays={setAcOffsetDays}
-                  acXStepRef={acXStepRef}
+                  colWidth={colWidth}
+                  numDays={numDays}
+                  onScrollX={(x) => syncScrollX(x, type)}
+                  registerScroll={(ref) => scrollNodeRefs.current.set(type, ref)}
                 />
               ))}
             </View>
