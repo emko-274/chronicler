@@ -40,6 +40,7 @@ export interface UpdateActivityLog {
   started_at?: string;
   ended_at?: string | null;
   notes?: string | null;
+  extra_data?: Record<string, unknown> | null;
 }
 
 export const updateLog = (id: string, update: UpdateActivityLog): Promise<ActivityLog> =>

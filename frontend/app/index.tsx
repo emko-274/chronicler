@@ -115,6 +115,123 @@ function EditDateInput({ value, onChange }: { value: Date; onChange: (d: Date) =
   );
 }
 
+const PRESET_UNITS = ['µg', 'mg', 'g', 'kg', 'ml', 'L'];
+
+function UnitPicker({ value, onChange }: { value: string; onChange: (u: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [customUnits, setCustomUnits] = useState<string[]>([]);
+  const [draft, setDraft] = useState('');
+  const allUnits = [...PRESET_UNITS, ...customUnits];
+
+  const addCustom = () => {
+    const u = draft.trim();
+    if (!u) return;
+    if (!allUnits.some((x) => x.toLowerCase() === u.toLowerCase())) {
+      setCustomUnits((prev) => [...prev, u]);
+    }
+    onChange(u);
+    setDraft('');
+    setOpen(false);
+  };
+
+  return (
+    <>
+      <TouchableOpacity style={unitPickerStyles.btn} onPress={() => setOpen(true)} activeOpacity={0.7}>
+        <Text style={value ? unitPickerStyles.btnText : unitPickerStyles.btnPlaceholder} numberOfLines={1}>
+          {value || 'Unit'}
+        </Text>
+        <Ionicons name="chevron-down" size={13} color="#9ca3af" />
+      </TouchableOpacity>
+
+      <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
+        <TouchableOpacity style={unitPickerStyles.overlay} activeOpacity={1} onPress={() => setOpen(false)}>
+          <View style={unitPickerStyles.sheet} onStartShouldSetResponder={() => true}>
+            <View style={unitPickerStyles.sheetHeader}>
+              <Text style={unitPickerStyles.sheetTitle}>Select Unit</Text>
+              <TouchableOpacity onPress={() => setOpen(false)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                <Ionicons name="close" size={18} color="#9ca3af" />
+              </TouchableOpacity>
+            </View>
+            <ScrollView style={{ maxHeight: 220 }} keyboardShouldPersistTaps="handled">
+              <TouchableOpacity
+                style={[unitPickerStyles.option, value === '' && unitPickerStyles.optionOn]}
+                onPress={() => { onChange(''); setOpen(false); }}
+              >
+                <Text style={[unitPickerStyles.optionText, value === '' && unitPickerStyles.optionTextOn]}>None</Text>
+                {value === '' && <Ionicons name="checkmark" size={16} color="#6366f1" />}
+              </TouchableOpacity>
+              {allUnits.map((u) => (
+                <TouchableOpacity
+                  key={u}
+                  style={[unitPickerStyles.option, value === u && unitPickerStyles.optionOn]}
+                  onPress={() => { onChange(u); setOpen(false); }}
+                >
+                  <Text style={[unitPickerStyles.optionText, value === u && unitPickerStyles.optionTextOn]}>{u}</Text>
+                  {value === u && <Ionicons name="checkmark" size={16} color="#6366f1" />}
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+            <View style={unitPickerStyles.customRow}>
+              <TextInput
+                style={unitPickerStyles.customInput}
+                placeholder="Add custom unit…"
+                placeholderTextColor="#9ca3af"
+                value={draft}
+                onChangeText={setDraft}
+                autoCorrect={false}
+                autoCapitalize="none"
+                onSubmitEditing={addCustom}
+                returnKeyType="done"
+              />
+              <TouchableOpacity
+                style={[unitPickerStyles.customAddBtn, !draft.trim() && unitPickerStyles.customAddBtnOff]}
+                onPress={addCustom}
+              >
+                <Text style={unitPickerStyles.customAddText}>Add</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+    </>
+  );
+}
+
+const unitPickerStyles = StyleSheet.create({
+  btn: {
+    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    backgroundColor: '#f9fafb', borderRadius: 8, borderWidth: 1, borderColor: '#d1d5db',
+    paddingHorizontal: 12, paddingVertical: 12, gap: 4,
+  },
+  btnText: { fontSize: 15, color: '#111827', flex: 1 },
+  btnPlaceholder: { fontSize: 15, color: '#9ca3af', flex: 1 },
+  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center', padding: 24 },
+  sheet: { backgroundColor: '#fff', borderRadius: 16, width: '100%', maxWidth: 360, overflow: 'hidden' },
+  sheetHeader: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#f3f4f6',
+  },
+  sheetTitle: { fontSize: 15, fontWeight: '700', color: '#111827' },
+  option: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#f9fafb',
+  },
+  optionOn: { backgroundColor: '#eef2ff' },
+  optionText: { fontSize: 15, color: '#374151' },
+  optionTextOn: { color: '#6366f1', fontWeight: '600' },
+  customRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    padding: 12, borderTopWidth: 1, borderTopColor: '#f3f4f6', backgroundColor: '#f9fafb',
+  },
+  customInput: {
+    flex: 1, backgroundColor: '#fff', borderRadius: 8, borderWidth: 1, borderColor: '#d1d5db',
+    paddingHorizontal: 10, paddingVertical: 8, fontSize: 14, color: '#111827',
+  },
+  customAddBtn: { backgroundColor: '#6366f1', borderRadius: 8, paddingHorizontal: 14, paddingVertical: 8 },
+  customAddBtnOff: { backgroundColor: '#e5e7eb' },
+  customAddText: { color: '#fff', fontWeight: '600', fontSize: 14 },
+});
+
 function EditLogModal({
   log,
   onClose,
@@ -128,6 +245,9 @@ function EditLogModal({
   const [startDate, setStartDate] = useState(new Date());
   const [endDate, setEndDate] = useState<Date | null>(null);
   const [notes, setNotes] = useState('');
+  const [showQuantity, setShowQuantity] = useState(false);
+  const [quantityText, setQuantityText] = useState('');
+  const [quantityUnit, setQuantityUnit] = useState('');
   const [saving, setSaving] = useState(false);
   const [picker, setPicker] = useState<PickerState>(null);
 
@@ -137,6 +257,16 @@ function EditLogModal({
     setStartDate(new Date(log.started_at));
     setEndDate(log.ended_at ? new Date(log.ended_at) : null);
     setNotes(log.notes ?? '');
+    const qty = log.extra_data?.quantity;
+    if (typeof qty === 'number') {
+      setShowQuantity(true);
+      setQuantityText(qty % 1 === 0 ? qty.toFixed(0) : String(qty));
+      setQuantityUnit(String(log.extra_data?.unit ?? ''));
+    } else {
+      setShowQuantity(false);
+      setQuantityText('');
+      setQuantityUnit('');
+    }
   }, [log?.id]);
 
   const onPickerChange = (event: DateTimePickerEvent, selected?: Date) => {
@@ -164,6 +294,9 @@ function EditLogModal({
         started_at: startDate.toISOString(),
         ended_at: endDate ? endDate.toISOString() : null,
         notes: notes.trim() || null,
+        extra_data: showQuantity && quantityText.trim()
+          ? { quantity: parseFloat(quantityText), unit: quantityUnit.trim() }
+          : null,
       });
       onSave();
     } catch {
@@ -237,6 +370,35 @@ function EditLogModal({
               <TouchableOpacity onPress={() => setEndDate(new Date())}>
                 <Text style={editStyles.addEndText}>+ Add end time</Text>
               </TouchableOpacity>
+            )}
+
+            <View style={editStyles.endRow}>
+              <Text style={editStyles.label}>Quantity</Text>
+              {!showQuantity && (
+                <TouchableOpacity onPress={() => setShowQuantity(true)}>
+                  <Text style={editStyles.addEndText}>+ Add</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+            {showQuantity && (
+              <View style={editStyles.quantityRow}>
+                <TextInput
+                  style={[editStyles.input, { flex: 1 }]}
+                  placeholder="Amount"
+                  placeholderTextColor="#9ca3af"
+                  value={quantityText}
+                  onChangeText={setQuantityText}
+                  keyboardType="decimal-pad"
+                />
+                <UnitPicker value={quantityUnit} onChange={setQuantityUnit} />
+                <TouchableOpacity
+                  onPress={() => { setShowQuantity(false); setQuantityText(''); setQuantityUnit(''); }}
+                  style={editStyles.removeEndBtn}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <Ionicons name="close-circle" size={20} color="#9ca3af" />
+                </TouchableOpacity>
+              </View>
             )}
 
             <Text style={editStyles.label}>Notes</Text>
@@ -885,10 +1047,14 @@ function TimelineChart({
                 const timeStr = formatTimeRange(tooltip.log.started_at, tooltip.log.ended_at);
                 const dur = tooltip.log.duration_minutes
                   ? formatDuration(tooltip.log.duration_minutes) : null;
+                const rawQty = tooltip.log.extra_data?.quantity;
+                const qty = typeof rawQty === 'number'
+                  ? `${rawQty % 1 === 0 ? rawQty.toFixed(0) : rawQty.toFixed(1)}${tooltip.log.extra_data?.unit ? ` ${tooltip.log.extra_data.unit}` : ''}`
+                  : null;
                 const noteSnippet = tooltip.log.notes
                   ? (tooltip.log.notes.length > 22 ? tooltip.log.notes.slice(0, 22) + '…' : tooltip.log.notes)
                   : null;
-                const lines = [timeStr, dur, noteSnippet].filter(Boolean) as string[];
+                const lines = [timeStr, dur, qty, noteSnippet].filter(Boolean) as string[];
                 const tipH = 18 + lines.length * 13 + 8;
                 const tx = Math.max(0, Math.min(tooltip.barX, totalChartW - TOOLTIP_W));
                 const spaceAbove = tooltip.barY >= tipH + TOOLTIP_PAD;
@@ -946,24 +1112,6 @@ function TimelineChart({
 
 // ── Per-type chart ─────────────────────────────────────────────────────────
 
-// Catmull-Rom → cubic Bezier smooth path through an array of {x, y} points
-function smoothCurveD(pts: Array<{ x: number; y: number }>): string {
-  if (pts.length === 0) return '';
-  if (pts.length === 1) return `M${pts[0].x.toFixed(1)},${pts[0].y.toFixed(1)}`;
-  let d = `M${pts[0].x.toFixed(1)},${pts[0].y.toFixed(1)}`;
-  for (let k = 0; k < pts.length - 1; k++) {
-    const p0 = pts[Math.max(0, k - 1)];
-    const p1 = pts[k];
-    const p2 = pts[k + 1];
-    const p3 = pts[Math.min(pts.length - 1, k + 2)];
-    const cp1x = p1.x + (p2.x - p0.x) / 6;
-    const cp1y = p1.y + (p2.y - p0.y) / 6;
-    const cp2x = p2.x - (p3.x - p1.x) / 6;
-    const cp2y = p2.y - (p3.y - p1.y) / 6;
-    d += ` C${cp1x.toFixed(1)},${cp1y.toFixed(1)} ${cp2x.toFixed(1)},${cp2y.toFixed(1)} ${p2.x.toFixed(1)},${p2.y.toFixed(1)}`;
-  }
-  return d;
-}
 
 function ActivityChart({
   type,
@@ -1158,10 +1306,6 @@ function ActivityChart({
                 <Stop offset="0" stopColor={colorPair[0]} stopOpacity="1" />
                 <Stop offset="1" stopColor={colorPair[1]} stopOpacity="1" />
               </LinearGradient>
-              <LinearGradient id={`fill_${type}`} x1="0" y1={PT} x2="0" y2={baseY} gradientUnits="userSpaceOnUse">
-                <Stop offset="0" stopColor="#fff" stopOpacity="0.30" />
-                <Stop offset="1" stopColor="#fff" stopOpacity="0.03" />
-              </LinearGradient>
             </Defs>
             <Rect x={0} y={0} width={totalChartW} height={SVG_H} fill={`url(#bg_${type})`} />
 
@@ -1180,15 +1324,11 @@ function ActivityChart({
                 stroke="rgba(255,255,255,0.55)" strokeWidth={1} strokeDasharray="4 3" />
             )}
 
-            {/* Duration/quantity charts: smooth area + line + dots */}
+            {/* Duration/quantity charts: straight segments + dots */}
             {(hasDuration || hasQuantity) && segments.map((s, si) => {
-              const curve = smoothCurveD(s);
-              const areaD = curve + ` L${s[s.length - 1].x.toFixed(1)},${baseY} L${s[0].x.toFixed(1)},${baseY} Z`;
+              const d = s.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ');
               return (
-                <G key={si}>
-                  <Path d={areaD} fill={`url(#fill_${type})`} stroke="none" />
-                  <Path d={curve} stroke="rgba(255,255,255,0.9)" strokeWidth={2} fill="none" strokeLinecap="round" strokeLinejoin="round" />
-                </G>
+                <Path key={si} d={d} stroke="rgba(255,255,255,0.9)" strokeWidth={2} fill="none" strokeLinecap="round" strokeLinejoin="round" />
               );
             })}
 
@@ -1912,6 +2052,7 @@ const editStyles = StyleSheet.create({
   dateBtnText: { fontSize: 15, color: '#111827' },
   endRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   removeEndBtn: { paddingLeft: 4 },
+  quantityRow: { flexDirection: 'row', alignItems: 'stretch', gap: 8 },
   addEndText: { fontSize: 14, color: '#6366f1', fontWeight: '600', paddingVertical: 10 },
   saveBtn: {
     backgroundColor: '#6366f1', padding: 16, borderRadius: 10,
