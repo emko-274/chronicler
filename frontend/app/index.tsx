@@ -973,6 +973,8 @@ function ActivityChart({
   numDays,
   onScrollX,
   registerScroll,
+  collapsed,
+  onToggleCollapsed,
 }: {
   type: string;
   logs: ActivityLog[];
@@ -981,6 +983,8 @@ function ActivityChart({
   numDays: number;
   onScrollX: (x: number) => void;
   registerScroll: (ref: ScrollView | null) => void;
+  collapsed: boolean;
+  onToggleCollapsed: () => void;
 }) {
   const [tooltip, setTooltip] = useState<{ idx: number } | null>(null);
   const scrollRef = useRef<ScrollView>(null);
@@ -1001,10 +1005,13 @@ function ActivityChart({
   if (byDate.size === 0) {
     return (
       <View style={styles.chartCard}>
-        <Text style={styles.chartTitle}>
-          {type.charAt(0).toUpperCase() + type.slice(1)} — not enough data yet
-        </Text>
-        <Text style={styles.chartEmpty}>Log at least 2 days to see a chart.</Text>
+        <TouchableOpacity style={styles.chartHeader} onPress={onToggleCollapsed} activeOpacity={0.7}>
+          <Text style={styles.chartTitle}>
+            {type.charAt(0).toUpperCase() + type.slice(1)} — not enough data yet
+          </Text>
+          <Ionicons name={collapsed ? 'chevron-down' : 'chevron-up'} size={16} color="#9ca3af" />
+        </TouchableOpacity>
+        {!collapsed && <Text style={styles.chartEmpty}>Log at least 2 days to see a chart.</Text>}
       </View>
     );
   }
@@ -1072,13 +1079,14 @@ function ActivityChart({
 
   return (
     <View style={styles.chartCard}>
-      <View style={styles.chartHeader}>
+      <TouchableOpacity style={styles.chartHeader} onPress={onToggleCollapsed} activeOpacity={0.7}>
         <View>
           <Text style={styles.chartTitle}>{type.charAt(0).toUpperCase() + type.slice(1)}</Text>
-          {hasRangeData && <Text style={styles.chartMean}>avg {meanStr}</Text>}
+          {!collapsed && hasRangeData && <Text style={styles.chartMean}>avg {meanStr}</Text>}
         </View>
-      </View>
-      <View style={{ flexDirection: 'row' }}>
+        <Ionicons name={collapsed ? 'chevron-down' : 'chevron-up'} size={16} color="#9ca3af" />
+      </TouchableOpacity>
+      {!collapsed && <View style={{ flexDirection: 'row' }}>
         {/* Pinned Y-axis */}
         <Svg width={YW} height={SVG_H}>
           <Defs>
@@ -1196,7 +1204,7 @@ function ActivityChart({
             )}
           </Svg>
         </ScrollView>
-      </View>
+      </View>}
     </View>
   );
 }
@@ -1394,6 +1402,15 @@ export default function DashboardScreen() {
   const [loading, setLoading] = useState(true);
   const [visibleTypes, setVisibleTypes] = useState<Set<string>>(new Set());
   const [editingLog, setEditingLog] = useState<ActivityLog | null>(null);
+  const [collapsedCharts, setCollapsedCharts] = useState<Set<string>>(new Set());
+
+  const toggleChartCollapse = (type: string) => {
+    setCollapsedCharts((prev) => {
+      const next = new Set(prev);
+      if (next.has(type)) next.delete(type); else next.add(type);
+      return next;
+    });
+  };
 
   // Shared timeline state lifted here so all charts use the same scale + history
   const [colWidth, setColWidth] = useState(DEFAULT_COL_W);
@@ -1546,6 +1563,8 @@ export default function DashboardScreen() {
                   numDays={numDays}
                   onScrollX={(x) => syncScrollX(x, type)}
                   registerScroll={(ref) => scrollNodeRefs.current.set(type, ref)}
+                  collapsed={collapsedCharts.has(type)}
+                  onToggleCollapsed={() => toggleChartCollapse(type)}
                 />
               ))}
             </View>
