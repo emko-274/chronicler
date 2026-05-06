@@ -98,6 +98,173 @@ function WebDateOnlyInput({ value, onChange }: { value: Date; onChange: (d: Date
   );
 }
 
+const PRESET_UNITS = ['µg', 'mg', 'g', 'kg', 'ml', 'L'];
+
+function UnitPicker({ value, onChange }: { value: string; onChange: (u: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [customUnits, setCustomUnits] = useState<string[]>([]);
+  const [draft, setDraft] = useState('');
+
+  const allUnits = [...PRESET_UNITS, ...customUnits];
+
+  const addCustom = () => {
+    const u = draft.trim();
+    if (!u) return;
+    if (!allUnits.some((x) => x.toLowerCase() === u.toLowerCase())) {
+      setCustomUnits((prev) => [...prev, u]);
+    }
+    onChange(u);
+    setDraft('');
+    setOpen(false);
+  };
+
+  return (
+    <>
+      <TouchableOpacity style={unitStyles.btn} onPress={() => setOpen(true)} activeOpacity={0.7}>
+        <Text style={value ? unitStyles.btnText : unitStyles.btnPlaceholder} numberOfLines={1}>
+          {value || 'Unit'}
+        </Text>
+        <Ionicons name="chevron-down" size={13} color="#9ca3af" />
+      </TouchableOpacity>
+
+      <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
+        <TouchableOpacity style={unitStyles.overlay} activeOpacity={1} onPress={() => setOpen(false)}>
+          <View style={unitStyles.sheet} onStartShouldSetResponder={() => true}>
+            <View style={unitStyles.sheetHeader}>
+              <Text style={unitStyles.sheetTitle}>Select Unit</Text>
+              <TouchableOpacity onPress={() => setOpen(false)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                <Ionicons name="close" size={18} color="#9ca3af" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={{ maxHeight: 220 }} keyboardShouldPersistTaps="handled">
+              <TouchableOpacity
+                style={[unitStyles.option, value === '' && unitStyles.optionOn]}
+                onPress={() => { onChange(''); setOpen(false); }}
+              >
+                <Text style={[unitStyles.optionText, value === '' && unitStyles.optionTextOn]}>None</Text>
+                {value === '' && <Ionicons name="checkmark" size={16} color="#6366f1" />}
+              </TouchableOpacity>
+              {allUnits.map((u) => (
+                <TouchableOpacity
+                  key={u}
+                  style={[unitStyles.option, value === u && unitStyles.optionOn]}
+                  onPress={() => { onChange(u); setOpen(false); }}
+                >
+                  <Text style={[unitStyles.optionText, value === u && unitStyles.optionTextOn]}>{u}</Text>
+                  {value === u && <Ionicons name="checkmark" size={16} color="#6366f1" />}
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+
+            <View style={unitStyles.customRow}>
+              <TextInput
+                style={unitStyles.customInput}
+                placeholder="Add custom unit…"
+                placeholderTextColor="#9ca3af"
+                value={draft}
+                onChangeText={setDraft}
+                autoCorrect={false}
+                autoCapitalize="none"
+                onSubmitEditing={addCustom}
+                returnKeyType="done"
+              />
+              <TouchableOpacity
+                style={[unitStyles.customAddBtn, !draft.trim() && unitStyles.customAddBtnOff]}
+                onPress={addCustom}
+              >
+                <Text style={unitStyles.customAddText}>Add</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+    </>
+  );
+}
+
+const unitStyles = StyleSheet.create({
+  btn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#fff',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    gap: 4,
+  },
+  btnText: { fontSize: 15, color: '#111827', flex: 1 },
+  btnPlaceholder: { fontSize: 15, color: '#9ca3af', flex: 1 },
+  overlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  sheet: {
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    width: '100%',
+    maxWidth: 360,
+    overflow: 'hidden',
+  },
+  sheetHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f3f4f6',
+  },
+  sheetTitle: { fontSize: 15, fontWeight: '700', color: '#111827' },
+  option: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f9fafb',
+  },
+  optionOn: { backgroundColor: '#eef2ff' },
+  optionText: { fontSize: 15, color: '#374151' },
+  optionTextOn: { color: '#6366f1', fontWeight: '600' },
+  customRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    padding: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#f3f4f6',
+    backgroundColor: '#f9fafb',
+  },
+  customInput: {
+    flex: 1,
+    backgroundColor: '#fff',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    fontSize: 14,
+    color: '#111827',
+  },
+  customAddBtn: {
+    backgroundColor: '#6366f1',
+    borderRadius: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+  },
+  customAddBtnOff: { backgroundColor: '#e5e7eb' },
+  customAddText: { color: '#fff', fontWeight: '600', fontSize: 14 },
+});
+
 export default function LogScreen() {
   const [activityType, setActivityType] = useState('');
   const [typeQuery, setTypeQuery] = useState('');
@@ -111,6 +278,7 @@ export default function LogScreen() {
   const [endDate, setEndDate] = useState<Date | null>(null);
   const [hasEnd, setHasEnd] = useState(false);
   const [notes, setNotes] = useState('');
+  const [showQuantity, setShowQuantity] = useState(false);
   const [quantityText, setQuantityText] = useState('');
   const [quantityUnit, setQuantityUnit] = useState('');
   const [saving, setSaving] = useState(false);
@@ -223,6 +391,7 @@ export default function LogScreen() {
         setIsDurationZero(false);
         setZeroDate(new Date());
         setNotes('');
+        setShowQuantity(false);
         setQuantityText('');
         setQuantityUnit('');
       } catch {
@@ -284,6 +453,7 @@ export default function LogScreen() {
       setEndDate(null);
       setHasEnd(false);
       setNotes('');
+      setShowQuantity(false);
       setQuantityText('');
       setQuantityUnit('');
     } catch {
@@ -433,37 +603,34 @@ export default function LogScreen() {
       )}
 
       {/* ── Quantity ── */}
-      <Text style={styles.label}>Quantity (optional)</Text>
-      <View style={styles.quantityRow}>
-        <TextInput
-          style={[styles.input, styles.quantityInput]}
-          placeholder="Amount"
-          placeholderTextColor="#9ca3af"
-          value={quantityText}
-          onChangeText={setQuantityText}
-          keyboardType="decimal-pad"
-        />
-        <TextInput
-          style={[styles.input, styles.unitInput]}
-          placeholder="Unit"
-          placeholderTextColor="#9ca3af"
-          value={quantityUnit}
-          onChangeText={setQuantityUnit}
-          autoCapitalize="none"
-          autoCorrect={false}
-        />
-      </View>
-      <View style={styles.unitChips}>
-        {['mg', 'g', 'ml', 'L', 'tablets', 'capsules', 'cups', 'oz'].map((u) => (
-          <TouchableOpacity
-            key={u}
-            style={[styles.unitChip, quantityUnit === u && styles.unitChipOn]}
-            onPress={() => setQuantityUnit((prev) => (prev === u ? '' : u))}
-          >
-            <Text style={[styles.unitChipText, quantityUnit === u && styles.unitChipTextOn]}>{u}</Text>
+      <View style={styles.endRow}>
+        <Text style={styles.label}>Quantity</Text>
+        {!showQuantity && (
+          <TouchableOpacity onPress={() => setShowQuantity(true)} style={styles.toggle}>
+            <Text style={styles.toggleText}>+ Add</Text>
           </TouchableOpacity>
-        ))}
+        )}
       </View>
+      {showQuantity && (
+        <View style={styles.quantityRow}>
+          <TextInput
+            style={[styles.input, styles.quantityInput]}
+            placeholder="Amount"
+            placeholderTextColor="#9ca3af"
+            value={quantityText}
+            onChangeText={setQuantityText}
+            keyboardType="decimal-pad"
+          />
+          <UnitPicker value={quantityUnit} onChange={setQuantityUnit} />
+          <TouchableOpacity
+            onPress={() => { setShowQuantity(false); setQuantityText(''); setQuantityUnit(''); }}
+            style={styles.endRemoveBtn}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Ionicons name="close-circle" size={20} color="#9ca3af" />
+          </TouchableOpacity>
+        </View>
+      )}
 
       {/* ── Notes ── */}
       <Text style={styles.label}>Notes (optional)</Text>
@@ -575,17 +742,8 @@ const styles = StyleSheet.create({
   saveBtnText: { color: '#fff', fontSize: 16, fontWeight: '700' },
 
   // Quantity input
-  quantityRow: { flexDirection: 'row', gap: 8 },
-  quantityInput: { flex: 2 },
-  unitInput: { flex: 1 },
-  unitChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 8 },
-  unitChip: {
-    paddingHorizontal: 10, paddingVertical: 5, borderRadius: 16,
-    backgroundColor: '#f3f4f6', borderWidth: 1, borderColor: '#e5e7eb',
-  },
-  unitChipOn: { backgroundColor: '#6366f1', borderColor: '#6366f1' },
-  unitChipText: { fontSize: 12, color: '#6b7280', fontWeight: '500' },
-  unitChipTextOn: { color: '#fff' },
+  quantityRow: { flexDirection: 'row', gap: 8, alignItems: 'stretch' },
+  quantityInput: { flex: 1 },
 
   // Timed / 0 min segmented control
   segmentedRow: {
