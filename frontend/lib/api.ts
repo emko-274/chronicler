@@ -101,6 +101,7 @@ export const runRegression = (body: {
   predictors: string[];
   start_date?: string;
   end_date?: string;
+  lag_days?: number;
   log_transform?: string[];
   windows?: Record<string, number>;
 }): Promise<RegressionResponse> =>

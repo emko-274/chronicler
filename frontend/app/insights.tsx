@@ -297,6 +297,7 @@ function RegressionPanel() {
   const [predictors, setPredictors] = useState<Set<string>>(new Set());
   const [logVars, setLogVars] = useState<Set<string>>(new Set());
   const [windows, setWindows] = useState<Record<string, number>>({});
+  const [lagDays, setLagDays] = useState(0);
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [loading, setLoading] = useState(false);
@@ -333,6 +334,7 @@ function RegressionPanel() {
         predictors: Array.from(predictors),
         start_date: startDate || undefined,
         end_date: endDate || undefined,
+        lag_days: lagDays || undefined,
         log_transform: allSelected.filter(t => logVars.has(t)),
         windows: Object.keys(activeWindows).length ? activeWindows : undefined,
       });
@@ -421,6 +423,31 @@ function RegressionPanel() {
             </View>
           )}
 
+          {/* Lag stepper */}
+          <Text style={styles.corrLabel}>Lag predictors (days)</Text>
+          <View style={styles.lagRow}>
+            <TouchableOpacity
+              style={[styles.lagBtn, lagDays === 0 && styles.lagBtnDisabled]}
+              onPress={() => setLagDays(d => Math.max(0, d - 1))}
+              disabled={lagDays === 0}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Ionicons name="remove" size={16} color={lagDays === 0 ? '#d1d5db' : '#374151'} />
+            </TouchableOpacity>
+            <Text style={styles.lagValue}>{lagDays}</Text>
+            <TouchableOpacity
+              style={[styles.lagBtn, lagDays === 14 && styles.lagBtnDisabled]}
+              onPress={() => setLagDays(d => Math.min(14, d + 1))}
+              disabled={lagDays === 14}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Ionicons name="add" size={16} color={lagDays === 14 ? '#d1d5db' : '#374151'} />
+            </TouchableOpacity>
+            {lagDays > 0 && (
+              <Text style={styles.lagHint}>X from {lagDays}d ago → today's Y</Text>
+            )}
+          </View>
+
           {/* Date range */}
           <Text style={styles.corrLabel}>Date range (optional)</Text>
           {Platform.OS === 'web' ? (
@@ -456,6 +483,9 @@ function RegressionPanel() {
           {/* Results */}
           {result && (
             <View style={styles.results}>
+              {lagDays > 0 && (
+                <Text style={styles.lagResultNote}>Lag: {lagDays}d — predictors from {lagDays} day{lagDays !== 1 ? 's' : ''} ago</Text>
+              )}
               {/* Summary row */}
               <View style={styles.regSummaryRow}>
                 <Text style={styles.regStat}>n = {result.n}</Text>

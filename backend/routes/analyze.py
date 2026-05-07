@@ -194,6 +194,7 @@ class RegressionRequest(BaseModel):
     predictors: list[str]
     start_date: Optional[str] = None
     end_date: Optional[str] = None
+    lag_days: int = 0
     log_transform: list[str] = []  # variable names to log-transform
     windows: dict[str, int] = {}   # type -> rolling window size
 
@@ -366,17 +367,35 @@ def analyze_regression(request: RegressionRequest, db: Session = Depends(get_db)
         return s
 
     series_map = {t: prepare_series(t) for t in all_types}
-    aligned = stats_module.align_multiple([series_map[t] for t in all_types])
 
-    if not aligned or len(aligned[0]) < len(all_types) + 2:
-        n = len(aligned[0]) if aligned else 0
-        raise HTTPException(
-            status_code=422,
-            detail=f"Only {n} overlapping days — need at least {len(all_types) + 2} to fit this model."
-        )
-
-    y = aligned[0]
-    X_cols = aligned[1:]
+    lag = request.lag_days
+    if lag == 0:
+        aligned = stats_module.align_multiple([series_map[t] for t in all_types])
+        if not aligned or len(aligned[0]) < len(all_types) + 2:
+            n = len(aligned[0]) if aligned else 0
+            raise HTTPException(
+                status_code=422,
+                detail=f"Only {n} overlapping days — need at least {len(all_types) + 2} to fit this model."
+            )
+        y = aligned[0]
+        X_cols = aligned[1:]
+    else:
+        from datetime import timedelta
+        response_series = series_map[request.response]
+        predictor_series = [series_map[t] for t in request.predictors]
+        y, X_cols = [], [[] for _ in request.predictors]
+        for d_str in sorted(response_series.keys()):
+            d = date_type.fromisoformat(d_str)
+            lagged = (d - timedelta(days=lag)).isoformat()
+            if all(lagged in ps for ps in predictor_series):
+                y.append(response_series[d_str])
+                for i, ps in enumerate(predictor_series):
+                    X_cols[i].append(ps[lagged])
+        if len(y) < len(all_types) + 2:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Only {len(y)} overlapping days with lag={lag} — need at least {len(all_types) + 2} to fit this model."
+            )
 
     try:
         result = stats_module.run_ols(y, X_cols, request.predictors)
@@ -390,6 +409,8 @@ def analyze_regression(request: RegressionRequest, db: Session = Depends(get_db)
         f"OLS regression predicting {request.response} from: {', '.join(request.predictors)}.",
         json.dumps(result, indent=2),
     ]
+    if request.lag_days:
+        context_parts.append(f"Predictors lagged by {request.lag_days} day(s) (each predictor's value is from {request.lag_days} day(s) before the response date).")
     if transforms:
         context_parts.append(f"Log-transformed (log1p): {', '.join(transforms)}.")
     if windows_used:
