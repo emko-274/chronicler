@@ -1695,54 +1695,59 @@ function TypeToggles({
   onToggle: (type: string) => void;
   onReorder: (newOrder: string[]) => void;
 }) {
-  const [dragType, setDragType] = useState<string | null>(null);
-  const [overType, setOverType] = useState<string | null>(null);
+  const [reordering, setReordering] = useState(false);
 
-  const handleDrop = (target: string) => {
-    if (!dragType || dragType === target) return;
+  const move = (idx: number, dir: -1 | 1) => {
+    const next = idx + dir;
+    if (next < 0 || next >= types.length) return;
     const arr = [...types];
-    const fromIdx = arr.indexOf(dragType);
-    const toIdx = arr.indexOf(target);
-    arr.splice(fromIdx, 1);
-    arr.splice(toIdx, 0, dragType);
+    [arr[idx], arr[next]] = [arr[next], arr[idx]];
     onReorder(arr);
-    setDragType(null);
-    setOverType(null);
   };
 
   if (types.length === 0) return null;
   return (
     <View style={styles.toggleSection}>
-      <Text style={styles.sectionLabel}>Show / Hide · drag to reorder layers</Text>
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+        <Text style={styles.sectionLabel}>Show / Hide</Text>
+        <TouchableOpacity
+          onPress={() => setReordering(r => !r)}
+          style={[styles.reorderBtn, reordering && styles.reorderBtnOn]}
+          hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+        >
+          <Ionicons name={reordering ? 'checkmark' : 'layers-outline'} size={13} color={reordering ? '#fff' : '#6366f1'} />
+          <Text style={[styles.reorderBtnText, reordering && styles.reorderBtnTextOn]}>
+            {reordering ? 'Done' : 'Reorder'}
+          </Text>
+        </TouchableOpacity>
+      </View>
       <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-        {types.map((type) => {
+        {types.map((type, idx) => {
           const active = visible.has(type);
           const color = colorMap.get(type)?.[0] ?? '#6366f1';
-          const isDragging = dragType === type;
-          const isOver = overType === type && dragType !== type;
+          if (reordering) {
+            return (
+              <View
+                key={type}
+                style={[styles.toggleChip, active ? { backgroundColor: color } : styles.toggleChipOff, { flexDirection: 'row', alignItems: 'center', gap: 2 }]}
+              >
+                <TouchableOpacity onPress={() => move(idx, -1)} disabled={idx === 0} hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}>
+                  <Ionicons name="chevron-back" size={12} color={idx === 0 ? 'rgba(255,255,255,0.25)' : (active ? '#fff' : '#9ca3af')} />
+                </TouchableOpacity>
+                <Text style={[styles.toggleChipText, !active && styles.toggleChipTextOff]}>{type}</Text>
+                <TouchableOpacity onPress={() => move(idx, 1)} disabled={idx === types.length - 1} hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}>
+                  <Ionicons name="chevron-forward" size={12} color={idx === types.length - 1 ? 'rgba(255,255,255,0.25)' : (active ? '#fff' : '#9ca3af')} />
+                </TouchableOpacity>
+              </View>
+            );
+          }
           return (
             <TouchableOpacity
               key={type}
               onPress={() => onToggle(type)}
-              style={[
-                styles.toggleChip,
-                active ? { backgroundColor: color } : styles.toggleChipOff,
-                isDragging && { opacity: 0.35 },
-                isOver && { borderWidth: 2, borderColor: '#6366f1', borderStyle: 'dashed' } as any,
-                Platform.OS === 'web' && ({ cursor: 'grab' } as any),
-              ]}
-              // @ts-ignore — HTML5 drag props, web only
-              {...(Platform.OS === 'web' ? {
-                draggable: true,
-                onDragStart: (e: any) => { e.dataTransfer.setData('text', type); setDragType(type); },
-                onDragOver:  (e: any) => { e.preventDefault(); if (overType !== type) setOverType(type); },
-                onDrop:      (e: any) => { e.preventDefault(); handleDrop(type); },
-                onDragEnd:   ()       => { setDragType(null); setOverType(null); },
-              } : {})}
+              style={[styles.toggleChip, active ? { backgroundColor: color } : styles.toggleChipOff]}
             >
-              <Text style={[styles.toggleChipText, !active && styles.toggleChipTextOff]}>
-                {type}
-              </Text>
+              <Text style={[styles.toggleChipText, !active && styles.toggleChipTextOff]}>{type}</Text>
             </TouchableOpacity>
           );
         })}
@@ -2008,7 +2013,7 @@ export default function DashboardScreen() {
 
   if (loading) return <ActivityIndicator style={styles.centered} size="large" color="#6366f1" />;
 
-  const charts = uniqueTypes.filter((t) => visibleTypes.has(t));
+  const charts = typeOrder.filter((t) => uniqueTypes.includes(t) && visibleTypes.has(t));
 
   // Filter + sort the log list independently of the charts
   const [sortField, sortDir] = logSort.split('_') as ['start' | 'end', 'desc' | 'asc'];
@@ -2235,6 +2240,14 @@ const styles = StyleSheet.create({
   toggleChipOff: { backgroundColor: '#e5e7eb' },
   toggleChipText: { color: '#fff', fontWeight: '600', fontSize: 13, textTransform: 'capitalize' },
   toggleChipTextOff: { color: '#6b7280' },
+  reorderBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8,
+    borderWidth: 1, borderColor: '#6366f1',
+  },
+  reorderBtnOn: { backgroundColor: '#6366f1' },
+  reorderBtnText: { fontSize: 11, fontWeight: '600', color: '#6366f1' },
+  reorderBtnTextOn: { color: '#fff' },
 
   // Charts
   chartCard: {
