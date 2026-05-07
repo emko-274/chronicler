@@ -93,7 +93,7 @@ function formatDateTime(date: Date): string {
   });
 }
 
-type PickerState = { target: 'start' | 'end'; mode: 'date' | 'time' } | null;
+type PickerState = { target: 'start' | 'end' | 'date_only'; mode: 'date' | 'time' } | null;
 
 // Must be at module level — if defined inside EditLogModal, React remounts the
 // <input> on every render, closing the browser's native date picker immediately.
@@ -106,6 +106,27 @@ function EditDateInput({ value, onChange }: { value: Date; onChange: (d: Date) =
       value={toLocalInputValue(value)}
       max={toLocalInputValue(new Date())}
       onChange={(e: React.ChangeEvent<HTMLInputElement>) => onChange(new Date(e.target.value))}
+      style={{
+        fontSize: 15, padding: 12, borderRadius: 8,
+        border: '1px solid #d1d5db', backgroundColor: '#fff',
+        color: '#111827', width: '100%', boxSizing: 'border-box',
+      }}
+    />
+  );
+}
+
+function EditDateOnlyInput({ value, onChange }: { value: Date; onChange: (d: Date) => void }) {
+  if (Platform.OS !== 'web') return null;
+  return (
+    // @ts-ignore
+    <input
+      type="date"
+      value={toLocalDateValue(value)}
+      max={toLocalDateValue(new Date())}
+      onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+        const d = new Date(e.target.value + 'T12:00:00');
+        onChange(d);
+      }}
       style={{
         fontSize: 15, padding: 12, borderRadius: 8,
         border: '1px solid #d1d5db', backgroundColor: '#fff',
@@ -242,6 +263,8 @@ function EditLogModal({
   onSave: () => void;
 }) {
   const [activityType, setActivityType] = useState('');
+  const [isUntimed, setIsUntimed] = useState(false);
+  const [untimedDate, setUntimedDate] = useState(new Date());
   const [startDate, setStartDate] = useState(new Date());
   const [endDate, setEndDate] = useState<Date | null>(null);
   const [notes, setNotes] = useState('');
@@ -254,8 +277,15 @@ function EditLogModal({
   useEffect(() => {
     if (!log) return;
     setActivityType(log.activity_type);
-    setStartDate(new Date(log.started_at));
-    setEndDate(log.ended_at ? new Date(log.ended_at) : null);
+    const untimed = log.extra_data?.untimed === true;
+    setIsUntimed(untimed);
+    const started = new Date(log.started_at);
+    if (untimed) {
+      setUntimedDate(started);
+    } else {
+      setStartDate(started);
+      setEndDate(log.ended_at ? new Date(log.ended_at) : null);
+    }
     setNotes(log.notes ?? '');
     const qty = log.extra_data?.quantity;
     if (typeof qty === 'number') {
@@ -272,6 +302,13 @@ function EditLogModal({
   const onPickerChange = (event: DateTimePickerEvent, selected?: Date) => {
     if (!picker || !selected) { setPicker(null); return; }
     if (event.type === 'dismissed') { setPicker(null); return; }
+    if (picker.target === 'date_only') {
+      const d = new Date(selected);
+      d.setHours(12, 0, 0, 0);
+      setUntimedDate(d);
+      setPicker(null);
+      return;
+    }
     if (picker.target === 'start') setStartDate(selected);
     else setEndDate(selected);
     if (Platform.OS === 'android' && picker.mode === 'date') {
@@ -283,21 +320,32 @@ function EditLogModal({
 
   const handleSave = async () => {
     if (!log) return;
-    if (endDate && endDate <= startDate) {
+    if (!isUntimed && endDate && endDate <= startDate) {
       Alert.alert('Invalid time', 'End time must be after start time.');
       return;
     }
+    const quantityExtra = showQuantity && quantityText.trim()
+      ? { quantity: parseFloat(quantityText), unit: quantityUnit.trim() }
+      : null;
     setSaving(true);
     try {
-      await updateLog(log.id, {
-        activity_type: activityType,
-        started_at: startDate.toISOString(),
-        ended_at: endDate ? endDate.toISOString() : null,
-        notes: notes.trim() || null,
-        extra_data: showQuantity && quantityText.trim()
-          ? { quantity: parseFloat(quantityText), unit: quantityUnit.trim() }
-          : null,
-      });
+      if (isUntimed) {
+        await updateLog(log.id, {
+          activity_type: activityType,
+          started_at: untimedDate.toISOString(),
+          ended_at: null,
+          notes: notes.trim() || null,
+          extra_data: { untimed: true, ...(quantityExtra ?? {}) },
+        });
+      } else {
+        await updateLog(log.id, {
+          activity_type: activityType,
+          started_at: startDate.toISOString(),
+          ended_at: endDate ? endDate.toISOString() : null,
+          notes: notes.trim() || null,
+          extra_data: quantityExtra,
+        });
+      }
       onSave();
     } catch {
       Alert.alert('Error', 'Could not save changes. Is the backend running?');
@@ -331,45 +379,80 @@ function EditLogModal({
               autoCorrect={false}
             />
 
-            <Text style={editStyles.label}>Start Time</Text>
-            {Platform.OS === 'web' ? (
-              <EditDateInput value={startDate} onChange={setStartDate} />
-            ) : (
+            <View style={editStyles.segmentedRow}>
               <TouchableOpacity
-                style={editStyles.dateBtn}
-                onPress={() => setPicker({ target: 'start', mode: 'date' })}
+                style={[editStyles.segBtn, !isUntimed && editStyles.segBtnOn]}
+                onPress={() => setIsUntimed(false)}
               >
-                <Text style={editStyles.dateBtnText}>{formatDateTime(startDate)}</Text>
+                <Text style={[editStyles.segBtnText, !isUntimed && editStyles.segBtnTextOn]}>Timed</Text>
               </TouchableOpacity>
-            )}
+              <TouchableOpacity
+                style={[editStyles.segBtn, isUntimed && editStyles.segBtnOn]}
+                onPress={() => setIsUntimed(true)}
+              >
+                <Text style={[editStyles.segBtnText, isUntimed && editStyles.segBtnTextOn]}>Untimed</Text>
+              </TouchableOpacity>
+            </View>
 
-            <Text style={editStyles.label}>End Time</Text>
-            {endDate !== null ? (
-              <View style={editStyles.endRow}>
+            {isUntimed ? (
+              <>
+                <Text style={editStyles.label}>Date</Text>
                 {Platform.OS === 'web' ? (
-                  <View style={{ flex: 1 }}>
-                    <EditDateInput value={endDate} onChange={setEndDate} />
-                  </View>
+                  <EditDateOnlyInput value={untimedDate} onChange={setUntimedDate} />
                 ) : (
                   <TouchableOpacity
-                    style={[editStyles.dateBtn, { flex: 1 }]}
-                    onPress={() => setPicker({ target: 'end', mode: 'date' })}
+                    style={editStyles.dateBtn}
+                    onPress={() => setPicker({ target: 'date_only', mode: 'date' })}
                   >
-                    <Text style={editStyles.dateBtnText}>{formatDateTime(endDate)}</Text>
+                    <Text style={editStyles.dateBtnText}>
+                      {untimedDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
+                    </Text>
                   </TouchableOpacity>
                 )}
-                <TouchableOpacity
-                  onPress={() => setEndDate(null)}
-                  style={editStyles.removeEndBtn}
-                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                >
-                  <Ionicons name="close-circle" size={20} color="#9ca3af" />
-                </TouchableOpacity>
-              </View>
+              </>
             ) : (
-              <TouchableOpacity onPress={() => setEndDate(new Date())}>
-                <Text style={editStyles.addEndText}>+ Add end time</Text>
-              </TouchableOpacity>
+              <>
+                <Text style={editStyles.label}>Start Time</Text>
+                {Platform.OS === 'web' ? (
+                  <EditDateInput value={startDate} onChange={setStartDate} />
+                ) : (
+                  <TouchableOpacity
+                    style={editStyles.dateBtn}
+                    onPress={() => setPicker({ target: 'start', mode: 'date' })}
+                  >
+                    <Text style={editStyles.dateBtnText}>{formatDateTime(startDate)}</Text>
+                  </TouchableOpacity>
+                )}
+
+                <Text style={editStyles.label}>End Time</Text>
+                {endDate !== null ? (
+                  <View style={editStyles.endRow}>
+                    {Platform.OS === 'web' ? (
+                      <View style={{ flex: 1 }}>
+                        <EditDateInput value={endDate} onChange={setEndDate} />
+                      </View>
+                    ) : (
+                      <TouchableOpacity
+                        style={[editStyles.dateBtn, { flex: 1 }]}
+                        onPress={() => setPicker({ target: 'end', mode: 'date' })}
+                      >
+                        <Text style={editStyles.dateBtnText}>{formatDateTime(endDate)}</Text>
+                      </TouchableOpacity>
+                    )}
+                    <TouchableOpacity
+                      onPress={() => setEndDate(null)}
+                      style={editStyles.removeEndBtn}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    >
+                      <Ionicons name="close-circle" size={20} color="#9ca3af" />
+                    </TouchableOpacity>
+                  </View>
+                ) : (
+                  <TouchableOpacity onPress={() => setEndDate(new Date())}>
+                    <Text style={editStyles.addEndText}>+ Add end time</Text>
+                  </TouchableOpacity>
+                )}
+              </>
             )}
 
             <View style={editStyles.endRow}>
@@ -420,8 +503,12 @@ function EditLogModal({
 
           {picker && Platform.OS !== 'web' && (
             <DateTimePicker
-              value={picker.target === 'start' ? startDate : (endDate ?? new Date())}
-              mode={picker.mode}
+              value={
+                picker.target === 'date_only' ? untimedDate
+                  : picker.target === 'start' ? startDate
+                  : (endDate ?? new Date())
+              }
+              mode={picker.target === 'date_only' ? 'date' : picker.mode}
               display={Platform.OS === 'ios' ? 'inline' : 'default'}
               onChange={onPickerChange}
             />
@@ -492,6 +579,7 @@ function TimelineChart({
   const scrollRef = useRef<ScrollView>(null);
   const chartWrapRef = useRef<View>(null);
   const chartBodyRef = useRef<View>(null);
+  const hideDelayRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [isPinching, setIsPinching] = useState(false);
   const [tooltip, setTooltip] = useState<TooltipState | null>(null);
   const [crosshairY, setCrosshairY] = useState<number | null>(null);
@@ -541,6 +629,14 @@ function TimelineChart({
     setScrollYSnap(Number.MAX_SAFE_INTEGER);
     setTimeout(() => scrollRef.current?.scrollToEnd({ animated: false }), 50);
   }, [isFlipped]);
+
+  const hideTipDelayed = () => {
+    if (hideDelayRef.current) clearTimeout(hideDelayRef.current);
+    hideDelayRef.current = setTimeout(() => setTooltip(null), 200);
+  };
+  const cancelHide = () => {
+    if (hideDelayRef.current) clearTimeout(hideDelayRef.current);
+  };
 
   const handleScroll = (e: any) => {
     const x = e.nativeEvent.contentOffset.x;
@@ -864,11 +960,17 @@ function TimelineChart({
                           />
                         );
                       } else {
+                        const isUntimed = log.extra_data?.untimed === true;
                         const r = Math.min(3, (FLIPPED_ROW_H - BAR_PADDING * 2) / 2);
                         return (
                           <Circle key={log.id}
-                            cx={barX} cy={FLIPPED_ROW_H / 2} r={r}
-                            fill={color} opacity={0.85}
+                            cx={isUntimed ? flippedW / 2 : barX}
+                            cy={FLIPPED_ROW_H / 2}
+                            r={r}
+                            fill={isUntimed ? 'none' : color}
+                            stroke={isUntimed ? color : 'none'}
+                            strokeWidth={isUntimed ? 1.5 : 0}
+                            opacity={isUntimed ? 0.4 : 0.85}
                             // @ts-ignore
                             {...interactionProps}
                           />
@@ -1000,7 +1102,7 @@ function TimelineChart({
                       const toggleTip = () => isHovered ? hideTip() : showTip();
                       // Mouse events (web only) — passing these to native SVG elements causes freezes
                       const interactionProps = Platform.OS === 'web'
-                        ? { onMouseEnter: showTip, onMouseLeave: hideTip, onClick: () => onEdit(log) }
+                        ? { onMouseEnter: showTip, onMouseLeave: hideTipDelayed, onClick: () => onEdit(log) }
                         : { onPressIn: showTip, onPressOut: hideTip, onPress: () => onEdit(log) };
 
                       if (log.ended_at) {
@@ -1022,12 +1124,18 @@ function TimelineChart({
                           </G>
                         );
                       } else {
-                        const r = Math.min(3, barW / 2);
+                        const isUntimed = log.extra_data?.untimed === true;
+                        const r = Math.max(3, Math.min(5, barW / 2));
                         return (
                           <G key={log.id}>
                             <Circle
-                              cx={barX + barW / 2} cy={barY} r={r}
-                              fill={color} opacity={isHovered ? 1 : 0.85}
+                              cx={barX + barW / 2}
+                              cy={isUntimed ? CHART_H / 2 : barY}
+                              r={r}
+                              fill={isUntimed ? 'none' : color}
+                              stroke={isUntimed ? color : 'none'}
+                              strokeWidth={isUntimed ? 1.5 : 0}
+                              opacity={isHovered ? 0.9 : isUntimed ? 0.4 : 0.85}
                               // @ts-ignore
                               {...interactionProps}
                             />
@@ -1042,8 +1150,8 @@ function TimelineChart({
               <Line x1={totalChartW} y1={0} x2={totalChartW} y2={CHART_H} stroke="#d1d5db" strokeWidth={1} />
               <Line x1={0} y1={CHART_H} x2={totalChartW} y2={CHART_H} stroke="#d1d5db" strokeWidth={1} />
 
-              {/* Tooltip — rendered last so it appears on top */}
-              {tooltip && (() => {
+              {/* Tooltip — native only; web uses a View overlay below */}
+              {tooltip && Platform.OS !== 'web' && (() => {
                 const timeStr = formatTimeRange(tooltip.log.started_at, tooltip.log.ended_at);
                 const dur = tooltip.log.duration_minutes
                   ? formatDuration(tooltip.log.duration_minutes) : null;
@@ -1104,6 +1212,71 @@ function TimelineChart({
             </View>
           </View>
         )}
+        {/* Web tooltip overlay — positioned absolute, stays visible while hovered */}
+        {tooltip && Platform.OS === 'web' && (() => {
+          const timeStr = formatTimeRange(tooltip.log.started_at, tooltip.log.ended_at);
+          const dur = tooltip.log.duration_minutes ? formatDuration(tooltip.log.duration_minutes) : null;
+          const rawQty = tooltip.log.extra_data?.quantity;
+          const qty = typeof rawQty === 'number'
+            ? `${rawQty % 1 === 0 ? rawQty.toFixed(0) : rawQty.toFixed(1)}${tooltip.log.extra_data?.unit ? ` ${tooltip.log.extra_data.unit}` : ''}`
+            : null;
+          const noteSnippet = tooltip.log.notes
+            ? (tooltip.log.notes.length > 40 ? tooltip.log.notes.slice(0, 40) + '…' : tooltip.log.notes)
+            : null;
+          const lines = [timeStr, dur, qty, noteSnippet].filter(Boolean) as string[];
+          // Estimate height: title(18) + lines + edit button(26) + padding(16)
+          const tipH = 18 + lines.length * 15 + 26 + 16;
+          const tx = Math.max(0, Math.min(tooltip.barX, totalChartW - TOOLTIP_W));
+          const rawLeft = tx - scrollXSnap + TIME_LABEL_W;
+          const overlayLeft = Math.max(0, Math.min(rawLeft, TIME_LABEL_W + viewportW - TOOLTIP_W));
+          const spaceAbove = tooltip.barY >= tipH + TOOLTIP_PAD;
+          const overlayTop = spaceAbove
+            ? tooltip.barY - tipH - TOOLTIP_PAD
+            : tooltip.barY + tooltip.barH + TOOLTIP_PAD;
+          return (
+            <View
+              style={{
+                position: 'absolute',
+                left: overlayLeft,
+                top: overlayTop,
+                width: TOOLTIP_W,
+                backgroundColor: '#fff',
+                borderRadius: 8,
+                borderWidth: 1,
+                borderColor: '#d1d5db',
+                padding: 10,
+                zIndex: 20,
+                shadowColor: '#000',
+                shadowOpacity: 0.08,
+                shadowRadius: 6,
+                shadowOffset: { width: 0, height: 2 },
+              }}
+              // @ts-ignore — web mouse events
+              onMouseEnter={cancelHide}
+              onMouseLeave={() => setTooltip(null)}
+            >
+              <Text style={{ fontSize: 11, fontWeight: '700', color: '#111827', marginBottom: 4 }}>
+                {tooltip.log.activity_type.charAt(0).toUpperCase() + tooltip.log.activity_type.slice(1)}
+              </Text>
+              {lines.map((line, i) => (
+                <Text key={i} style={{ fontSize: 10, color: '#6b7280', lineHeight: 15 }}>{line}</Text>
+              ))}
+              <TouchableOpacity
+                onPress={() => { setTooltip(null); onEdit(tooltip.log); }}
+                style={{
+                  marginTop: 8,
+                  paddingVertical: 4,
+                  paddingHorizontal: 10,
+                  backgroundColor: '#6366f1',
+                  borderRadius: 5,
+                  alignSelf: 'flex-start',
+                }}
+              >
+                <Text style={{ fontSize: 10, fontWeight: '600', color: '#fff' }}>Edit</Text>
+              </TouchableOpacity>
+            </View>
+          );
+        })()}
         </View>
       )}
     </View>
@@ -1138,6 +1311,8 @@ function ActivityChart({
   const scrollRef = useRef<ScrollView>(null);
   const [scrollX, setScrollX] = useState(colWidth * numDays); // start at rightmost (today)
   const [viewportW, setViewportW] = useState(SCREEN_W - 68);  // approx; refined on layout
+  const [showCount, setShowCount] = useState(false);
+  const [countBtnHovered, setCountBtnHovered] = useState(false);
 
   useEffect(() => {
     scrollRef.current?.scrollToEnd({ animated: false });
@@ -1145,23 +1320,51 @@ function ActivityChart({
 
   const hasDuration = logs.some((l) => l.activity_type === type && l.duration_minutes != null && l.duration_minutes > 0);
   const hasQuantity = !hasDuration && logs.some((l) => l.activity_type === type && typeof l.extra_data?.quantity === 'number');
+  const canToggleCount = hasDuration || hasQuantity;
+  const useCountMode = showCount && canToggleCount;
   const byDate = new Map<string, number>();
-  logs
-    .filter((l) => {
-      if (l.activity_type !== type) return false;
-      if (hasDuration) return l.duration_minutes != null && l.duration_minutes > 0;
-      if (hasQuantity) return typeof l.extra_data?.quantity === 'number';
-      return true;
-    })
-    .forEach((l) => {
-      const key = dayKey(new Date(l.started_at));
-      const val = hasDuration
-        ? l.duration_minutes!
-        : hasQuantity
-          ? (l.extra_data!.quantity as number)
-          : 1;
-      byDate.set(key, (byDate.get(key) ?? 0) + val);
-    });
+  if (useCountMode) {
+    logs
+      .filter(l => l.activity_type === type)
+      .forEach(l => {
+        const key = dayKey(new Date(l.started_at));
+        byDate.set(key, (byDate.get(key) ?? 0) + 1);
+      });
+  } else {
+    logs
+      .filter((l) => {
+        if (l.activity_type !== type) return false;
+        if (hasDuration) return l.duration_minutes != null && l.duration_minutes > 0;
+        if (hasQuantity) return typeof l.extra_data?.quantity === 'number';
+        return true;
+      })
+      .forEach((l) => {
+        if (hasDuration) {
+          const start = new Date(l.started_at);
+          const startKey = dayKey(start);
+          if (l.ended_at) {
+            const end = new Date(l.ended_at);
+            const endKey = dayKey(end);
+            if (endKey !== startKey) {
+              // Split at midnight: each day gets the minutes that fell on it
+              const midnight = new Date(start);
+              midnight.setDate(midnight.getDate() + 1);
+              midnight.setHours(0, 0, 0, 0);
+              const startMins = Math.round((midnight.getTime() - start.getTime()) / 60000);
+              const endMins = l.duration_minutes! - startMins;
+              if (startMins > 0) byDate.set(startKey, (byDate.get(startKey) ?? 0) + startMins);
+              if (endMins > 0) byDate.set(endKey, (byDate.get(endKey) ?? 0) + endMins);
+              return;
+            }
+          }
+          byDate.set(startKey, (byDate.get(startKey) ?? 0) + l.duration_minutes!);
+        } else {
+          const key = dayKey(new Date(l.started_at));
+          const val = hasQuantity ? (l.extra_data!.quantity as number) : 1;
+          byDate.set(key, (byDate.get(key) ?? 0) + val);
+        }
+      });
+  }
 
   if (byDate.size === 0) {
     return (
@@ -1188,7 +1391,7 @@ function ActivityChart({
   }
 
   const dataPoints = days.filter((d) => d.value !== null);
-  const hasRangeData = (hasDuration || hasQuantity) ? dataPoints.length >= 2 : dataPoints.length >= 1;
+  const hasRangeData = (!useCountMode && (hasDuration || hasQuantity)) ? dataPoints.length >= 2 : dataPoints.length >= 1;
 
   // Derive the most-used quantity unit from the logs for this type
   const derivedQuantityUnit = (() => {
@@ -1206,9 +1409,9 @@ function ActivityChart({
     return best;
   })();
 
-  const unit = hasDuration ? chartUnit(type) : hasQuantity ? (derivedQuantityUnit || 'qty') : 'times';
-  // For quantity/count charts the raw value is already the display value; only duration needs conversion
-  const dv = (rawVal: number) => hasDuration ? toChartValue(type, rawVal) : rawVal;
+  const unit = useCountMode ? 'entries' : hasDuration ? chartUnit(type) : hasQuantity ? (derivedQuantityUnit || 'qty') : 'times';
+  // Duration needs unit conversion; count mode and quantity/count charts use raw values
+  const dv = (rawVal: number) => (hasDuration && !useCountMode) ? toChartValue(type, rawVal) : rawVal;
 
   // Mean is scoped to the currently visible window, not all history
   const maxScrollX = Math.max(0, colWidth * numDays - viewportW);
@@ -1235,12 +1438,12 @@ function ActivityChart({
   const baseY = PT + plotH;
 
   const yTickVals = hasRangeData
-    ? (hasDuration || hasQuantity) ? [0, yMax / 2, yMax] : [0, maxVal]
+    ? (!useCountMode && (hasDuration || hasQuantity)) ? [0, yMax / 2, yMax] : [0, maxVal]
     : [];
   const formatY = (v: number) => (v % 1 === 0 ? v.toFixed(0) : v.toFixed(1));
 
   const segments: Array<Array<{ x: number; y: number }>> = [];
-  if ((hasDuration || hasQuantity) && hasRangeData) {
+  if (!useCountMode && (hasDuration || hasQuantity) && hasRangeData) {
     let seg: Array<{ x: number; y: number }> = [];
     days.forEach((d, i) => {
       if (d.value !== null) {
@@ -1266,13 +1469,44 @@ function ActivityChart({
 
   return (
     <View style={styles.chartPanelItem}>
-      <TouchableOpacity style={styles.chartHeader} onPress={onToggleCollapsed} activeOpacity={0.7}>
-        <View>
+      <View style={styles.chartHeader}>
+        <TouchableOpacity style={{ flex: 1 }} onPress={onToggleCollapsed} activeOpacity={0.7}>
           <Text style={styles.chartTitle}>{type.charAt(0).toUpperCase() + type.slice(1)}</Text>
           {!collapsed && meanStr !== '' && <Text style={styles.chartMean}>avg {meanStr}</Text>}
+        </TouchableOpacity>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          {canToggleCount && (
+            <TouchableOpacity
+              onPress={() => { setShowCount(c => !c); setTooltip(null); }}
+              {...(Platform.OS === 'web' ? {
+                onMouseEnter: () => setCountBtnHovered(true),
+                onMouseLeave: () => setCountBtnHovered(false),
+              } : {})}
+              style={[
+                styles.countModeBtn,
+                (countBtnHovered || useCountMode) && styles.countModeBtnExpanded,
+                useCountMode && styles.countModeBtnOn,
+              ]}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              activeOpacity={0.75}
+            >
+              <Ionicons
+                name="list-outline"
+                size={13}
+                color={useCountMode ? '#fff' : '#6b7280'}
+              />
+              {(countBtnHovered || useCountMode) && (
+                <Text style={[styles.countModeBtnText, useCountMode && styles.countModeBtnTextOn]}>
+                  {useCountMode ? 'counts on' : 'show counts'}
+                </Text>
+              )}
+            </TouchableOpacity>
+          )}
+          <TouchableOpacity onPress={onToggleCollapsed} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+            <Ionicons name={collapsed ? 'chevron-down' : 'chevron-up'} size={16} color="#9ca3af" />
+          </TouchableOpacity>
         </View>
-        <Ionicons name={collapsed ? 'chevron-down' : 'chevron-up'} size={16} color="#9ca3af" />
-      </TouchableOpacity>
+      </View>
       {!collapsed && <View style={{ flexDirection: 'row' }}>
         {/* Pinned Y-axis */}
         <Svg width={YW} height={SVG_H}>
@@ -1324,36 +1558,43 @@ function ActivityChart({
                 stroke="rgba(255,255,255,0.55)" strokeWidth={1} strokeDasharray="4 3" />
             )}
 
-            {/* Duration/quantity charts: straight segments + dots */}
-            {(hasDuration || hasQuantity) && segments.map((s, si) => {
+            {/* Duration/quantity (non-count mode): straight segments + dots */}
+            {!useCountMode && (hasDuration || hasQuantity) && segments.map((s, si) => {
               const d = s.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ');
               return (
                 <Path key={si} d={d} stroke="rgba(255,255,255,0.9)" strokeWidth={2} fill="none" strokeLinecap="round" strokeLinejoin="round" />
               );
             })}
 
-            {(hasDuration || hasQuantity) && days.map((d, i) => {
+            {!useCountMode && (hasDuration || hasQuantity) && days.map((d, i) => {
               if (d.value === null) return null;
               const v = dv(d.value);
               const selected = tooltip?.idx === i;
+              const dotProps = Platform.OS === 'web'
+                ? { onMouseEnter: () => setTooltip({ idx: i }), onMouseLeave: () => setTooltip(null) }
+                : { onPressIn: () => setTooltip({ idx: i }), onPressOut: () => setTooltip(null) };
               return (
                 <Circle
                   key={i}
                   cx={xOf(i)} cy={yOf(v)} r={selected ? dotR + 1 : dotR}
                   fill={selected ? '#fff' : 'rgba(255,255,255,0.85)'}
                   stroke="#fff" strokeWidth={selected ? 2 : 1.5}
-                  onPress={() => setTooltip((prev) => (prev?.idx === i ? null : { idx: i }))}
+                  // @ts-ignore — onMouseEnter/Leave valid on web SVG
+                  {...dotProps}
                 />
               );
             })}
 
-            {/* Count charts: lollipop scatterplot */}
-            {!hasDuration && !hasQuantity && days.map((d, i) => {
+            {/* Count/lollipop: native count charts and duration charts in count mode */}
+            {(useCountMode || (!hasDuration && !hasQuantity)) && days.map((d, i) => {
               if (d.value === null) return null;
               const v = dv(d.value);
               const cx = xOf(i);
               const cy = yOf(v);
               const selected = tooltip?.idx === i;
+              const dotProps = Platform.OS === 'web'
+                ? { onMouseEnter: () => setTooltip({ idx: i }), onMouseLeave: () => setTooltip(null) }
+                : { onPressIn: () => setTooltip({ idx: i }), onPressOut: () => setTooltip(null) };
               return (
                 <G key={i}>
                   <Line x1={cx} y1={baseY} x2={cx} y2={cy} stroke="rgba(255,255,255,0.55)" strokeWidth={1.5} />
@@ -1361,7 +1602,8 @@ function ActivityChart({
                     cx={cx} cy={cy} r={selected ? 5 : 4}
                     fill={selected ? '#fff' : 'rgba(255,255,255,0.9)'}
                     stroke="#fff" strokeWidth={selected ? 2 : 1.5}
-                    onPress={() => setTooltip((prev) => (prev?.idx === i ? null : { idx: i }))}
+                    // @ts-ignore — onMouseEnter/Leave valid on web SVG
+                    {...dotProps}
                   />
                 </G>
               );
@@ -1934,6 +2176,16 @@ const styles = StyleSheet.create({
     height: StyleSheet.hairlineWidth,
     backgroundColor: '#e5e7eb',
   },
+  countModeBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    paddingHorizontal: 6, paddingVertical: 4, borderRadius: 10,
+  },
+  countModeBtnExpanded: {
+    paddingHorizontal: 8, backgroundColor: '#e5e7eb',
+  },
+  countModeBtnOn: { backgroundColor: '#6366f1' },
+  countModeBtnText: { fontSize: 10, fontWeight: '600', color: '#6b7280' },
+  countModeBtnTextOn: { color: '#fff' },
   chartHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
   chartTitle: { fontSize: 13, fontWeight: '600', color: '#374151' },
   chartMean: { fontSize: 11, color: '#9ca3af', marginTop: 1 },
@@ -2054,6 +2306,14 @@ const editStyles = StyleSheet.create({
   removeEndBtn: { paddingLeft: 4 },
   quantityRow: { flexDirection: 'row', alignItems: 'stretch', gap: 8 },
   addEndText: { fontSize: 14, color: '#6366f1', fontWeight: '600', paddingVertical: 10 },
+  segmentedRow: {
+    flexDirection: 'row', marginTop: 14, marginBottom: 2,
+    borderRadius: 8, borderWidth: 1, borderColor: '#d1d5db', overflow: 'hidden',
+  },
+  segBtn: { flex: 1, paddingVertical: 9, alignItems: 'center', backgroundColor: '#f9fafb' },
+  segBtnOn: { backgroundColor: '#6366f1' },
+  segBtnText: { fontSize: 14, fontWeight: '600', color: '#374151' },
+  segBtnTextOn: { color: '#fff' },
   saveBtn: {
     backgroundColor: '#6366f1', padding: 16, borderRadius: 10,
     alignItems: 'center', marginTop: 20,

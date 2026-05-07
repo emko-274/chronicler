@@ -382,9 +382,11 @@ export default function LogScreen() {
         await createLog({
           activity_type: activityType,
           started_at: zeroDate.toISOString(),
-          ended_at: zeroDate.toISOString(),
           notes: notes.trim() || undefined,
-          extra_data: quantityText.trim() ? { quantity: parseFloat(quantityText), unit: quantityUnit.trim() } : undefined,
+          extra_data: {
+            untimed: true,
+            ...(quantityText.trim() ? { quantity: parseFloat(quantityText), unit: quantityUnit.trim() } : {}),
+          },
         });
         Alert.alert('Saved!', 'Your activity has been logged.');
         setActivityType('');
@@ -409,23 +411,10 @@ export default function LogScreen() {
     try {
       const existing = await getLogs(activityType, 200);
 
-      // ── 0-min override check ────────────────────────────────────────────
-      const startDay = toLocalDateValue(startDate);
-      const zeroEntry = existing.find(
-        (log) => log.duration_minutes === 0 &&
-          toLocalDateValue(new Date(log.started_at)) === startDay
-      );
-      if (zeroEntry) {
-        const msg = `There's already a 0-min "${activityType}" entry on ${startDay}. Replace it with this timed entry?`;
-        const replace = await showConfirm('0-min record exists', msg, 'Replace', true);
-        if (!replace) return;
-        try { await deleteLog(zeroEntry.id); } catch {}
-      }
-
       // ── Time-overlap check ──────────────────────────────────────────────
       const newEnd = hasEnd ? endDate : null;
       const conflict = existing.find(
-        (log) => log.duration_minutes !== 0 && overlapsLog(startDate, newEnd, log)
+        (log) => log.ended_at !== null && overlapsLog(startDate, newEnd, log)
       );
       if (conflict) {
         const conflictTime = formatDateTime(new Date(conflict.started_at));
@@ -527,7 +516,7 @@ export default function LogScreen() {
         </>
       )}
 
-      {/* ── Timed / 0 min segmented control ── */}
+      {/* ── Timed / Untimed segmented control ── */}
       {activityType ? (
         <View style={styles.segmentedRow}>
           <TouchableOpacity
@@ -540,7 +529,7 @@ export default function LogScreen() {
             style={[styles.segBtn, isDurationZero && styles.segBtnOn]}
             onPress={() => setIsDurationZero(true)}
           >
-            <Text style={[styles.segBtnText, isDurationZero && styles.segBtnTextOn]}>0 min</Text>
+            <Text style={[styles.segBtnText, isDurationZero && styles.segBtnTextOn]}>Untimed</Text>
           </TouchableOpacity>
         </View>
       ) : null}
