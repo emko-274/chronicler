@@ -554,6 +554,7 @@ function TimelineChart({
   colorMap,
   visibleTypes,
   onEdit,
+  onDelete,
   colWidth,
   setColWidth,
   numDays,
@@ -567,6 +568,7 @@ function TimelineChart({
   colorMap: Map<string, string[]>;
   visibleTypes: Set<string>;
   onEdit: (log: ActivityLog) => void;
+  onDelete: () => void;
   colWidth: number;
   setColWidth: (v: number | ((prev: number) => number)) => void;
   numDays: number;
@@ -1261,19 +1263,29 @@ function TimelineChart({
               {lines.map((line, i) => (
                 <Text key={i} style={{ fontSize: 10, color: '#6b7280', lineHeight: 15 }}>{line}</Text>
               ))}
-              <TouchableOpacity
-                onPress={() => { setTooltip(null); onEdit(tooltip.log); }}
-                style={{
-                  marginTop: 8,
-                  paddingVertical: 4,
-                  paddingHorizontal: 10,
-                  backgroundColor: '#6366f1',
-                  borderRadius: 5,
-                  alignSelf: 'flex-start',
-                }}
-              >
-                <Text style={{ fontSize: 10, fontWeight: '600', color: '#fff' }}>Edit</Text>
-              </TouchableOpacity>
+              <View style={{ flexDirection: 'row', gap: 6, marginTop: 8 }}>
+                <TouchableOpacity
+                  onPress={() => { setTooltip(null); onEdit(tooltip.log); }}
+                  style={{ padding: 5, borderRadius: 5, backgroundColor: '#f3f4f6' }}
+                  hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
+                >
+                  <Ionicons name="pencil-outline" size={13} color="#6366f1" />
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={async () => {
+                    const log = tooltip.log;
+                    const ok = window.confirm(`Delete this ${log.activity_type} entry?`);
+                    if (!ok) return;
+                    setTooltip(null);
+                    await deleteLog(log.id);
+                    onDelete();
+                  }}
+                  style={{ padding: 5, borderRadius: 5, backgroundColor: '#f3f4f6' }}
+                  hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
+                >
+                  <Ionicons name="trash-outline" size={13} color="#ef4444" />
+                </TouchableOpacity>
+              </View>
             </View>
           );
         })()}
@@ -1972,6 +1984,7 @@ export default function DashboardScreen() {
               colorMap={colorMap}
               visibleTypes={visibleTypes}
               onEdit={setEditingLog}
+              onDelete={fetchLogs}
               colWidth={colWidth}
               setColWidth={setColWidth}
               numDays={numDays}
