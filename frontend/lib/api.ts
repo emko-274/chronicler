@@ -73,6 +73,8 @@ export const analyzeCorrelations = (body: {
   types: string[];
   start_date?: string;
   end_date?: string;
+  lag_days?: number;
+  windows?: Record<string, number>;
 }): Promise<CorrelationsResponse> =>
   api.post('/analyze/correlations', body).then((r) => r.data);
 

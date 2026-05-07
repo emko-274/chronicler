@@ -5,7 +5,7 @@ Each dict has keys: activity_type, started_at (datetime), ended_at (datetime|Non
 duration_minutes (int|None), notes (str|None).
 """
 
-from datetime import date as date_type
+from datetime import date as date_type, timedelta
 from statistics import mean, median, stdev
 from typing import Optional
 from scipy import stats as scipy_stats
@@ -42,16 +42,47 @@ def daily_series(
     return series
 
 
+def rolling_aggregate(series: dict[str, float], window: int) -> dict[str, float]:
+    """
+    For each date D in the series, replace its value with the sum of all logged
+    values from D-(window-1) through D. Days with no log within the window
+    contribute 0. Days that have no data anywhere in their window are dropped.
+    """
+    if window <= 1:
+        return series
+    result: dict[str, float] = {}
+    for d_str in series:
+        d = date_type.fromisoformat(d_str)
+        total = sum(
+            series.get((d - timedelta(days=w)).isoformat(), 0.0)
+            for w in range(window)
+        )
+        result[d_str] = total
+    return result
+
+
 def align_series(
     a: dict[str, float],
     b: dict[str, float],
+    lag_days: int = 0,
 ) -> tuple[list[float], list[float]]:
     """
-    Returns (values_a, values_b) for the intersection of dates, in chronological order.
+    Returns (values_a, values_b) aligned in chronological order.
+    lag_days > 0: pair a[d] with b[d - lag_days] (does B from N days ago predict today's A?).
+    lag_days = 0: standard same-day alignment.
     Returns ([], []) when there is no overlap.
     """
-    common = sorted(set(a.keys()) & set(b.keys()))
-    return [a[d] for d in common], [b[d] for d in common]
+    if lag_days == 0:
+        common = sorted(set(a.keys()) & set(b.keys()))
+        return [a[d] for d in common], [b[d] for d in common]
+
+    result_a, result_b = [], []
+    for d_str in sorted(a.keys()):
+        lagged = (date_type.fromisoformat(d_str) - timedelta(days=lag_days)).isoformat()
+        if lagged in b:
+            result_a.append(a[d_str])
+            result_b.append(b[lagged])
+    return result_a, result_b
 
 
 def compute_pearson(vals_a: list[float], vals_b: list[float]) -> dict:

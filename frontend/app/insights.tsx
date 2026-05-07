@@ -44,7 +44,13 @@ function CorrelationPanel() {
   const [selectedTypes, setSelectedTypes] = useState<Set<string>>(new Set());
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
+  const [lagDays, setLagDays] = useState(0);
+  const [windows, setWindows] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(false);
+
+  const getWindow = (type: string) => windows[type] ?? 1;
+  const setWindow = (type: string, w: number) =>
+    setWindows(prev => ({ ...prev, [type]: Math.max(1, Math.min(30, w)) }));
   const [result, setResult] = useState<CorrelationsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -71,10 +77,15 @@ function CorrelationPanel() {
     setError(null);
     setResult(null);
     try {
+      const activeWindows = Object.fromEntries(
+        Object.entries(windows).filter(([t, w]) => selectedTypes.has(t) && w > 1)
+      );
       const res = await analyzeCorrelations({
         types: Array.from(selectedTypes),
         start_date: startDate || undefined,
         end_date: endDate || undefined,
+        lag_days: lagDays || undefined,
+        windows: Object.keys(activeWindows).length ? activeWindows : undefined,
       });
       setResult(res);
     } catch {
@@ -109,6 +120,38 @@ function CorrelationPanel() {
               );
             })}
           </ScrollView>
+
+          {/* Rolling windows — one stepper per selected type */}
+          {selectedTypes.size >= 2 && (
+            <View style={styles.windowsSection}>
+              <Text style={styles.corrLabel}>Rolling window (optional)</Text>
+              {Array.from(selectedTypes).map(type => {
+                const w = getWindow(type);
+                return (
+                  <View key={type} style={styles.windowRow}>
+                    <Text style={styles.windowLabel}>{type}</Text>
+                    <TouchableOpacity
+                      onPress={() => setWindow(type, w - 1)}
+                      disabled={w <= 1}
+                      style={[styles.lagBtn, w <= 1 && styles.lagBtnDisabled]}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    >
+                      <Ionicons name="remove" size={14} color={w <= 1 ? '#d1d5db' : '#374151'} />
+                    </TouchableOpacity>
+                    <Text style={styles.windowValue}>{w === 1 ? 'none' : `${w}d sum`}</Text>
+                    <TouchableOpacity
+                      onPress={() => setWindow(type, w + 1)}
+                      disabled={w >= 30}
+                      style={[styles.lagBtn, w >= 30 && styles.lagBtnDisabled]}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    >
+                      <Ionicons name="add" size={14} color={w >= 30 ? '#d1d5db' : '#374151'} />
+                    </TouchableOpacity>
+                  </View>
+                );
+              })}
+            </View>
+          )}
 
           {/* Date range */}
           <Text style={styles.corrLabel}>Date range (optional)</Text>
@@ -148,6 +191,31 @@ function CorrelationPanel() {
             </View>
           )}
 
+          {/* Lag stepper */}
+          <Text style={styles.corrLabel}>Lag (days)</Text>
+          <View style={styles.lagRow}>
+            <TouchableOpacity
+              style={[styles.lagBtn, lagDays === 0 && styles.lagBtnDisabled]}
+              onPress={() => setLagDays(d => Math.max(0, d - 1))}
+              disabled={lagDays === 0}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Ionicons name="remove" size={16} color={lagDays === 0 ? '#d1d5db' : '#374151'} />
+            </TouchableOpacity>
+            <Text style={styles.lagValue}>{lagDays}</Text>
+            <TouchableOpacity
+              style={[styles.lagBtn, lagDays === 14 && styles.lagBtnDisabled]}
+              onPress={() => setLagDays(d => Math.min(14, d + 1))}
+              disabled={lagDays === 14}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Ionicons name="add" size={16} color={lagDays === 14 ? '#d1d5db' : '#374151'} />
+            </TouchableOpacity>
+            {lagDays > 0 && (
+              <Text style={styles.lagHint}>B from {lagDays}d ago → today's A</Text>
+            )}
+          </View>
+
           {/* Run button */}
           <TouchableOpacity
             style={[styles.runBtn, (loading || selectedTypes.size < 2) && styles.runBtnOff]}
@@ -164,6 +232,17 @@ function CorrelationPanel() {
           {/* Results */}
           {result && (
             <View style={styles.results}>
+              {lagDays > 0 && (
+                <Text style={styles.lagResultNote}>Lag: {lagDays}d — B values shifted {lagDays} day{lagDays !== 1 ? 's' : ''} into the past</Text>
+              )}
+              {Object.entries(windows).some(([t, w]) => selectedTypes.has(t) && w > 1) && (
+                <Text style={styles.lagResultNote}>
+                  {'Windows: ' + Array.from(selectedTypes)
+                    .filter(t => getWindow(t) > 1)
+                    .map(t => `${t} ${getWindow(t)}d sum`)
+                    .join(', ')}
+                </Text>
+              )}
               {/* Table header */}
               <View style={[styles.tableRow, styles.tableHeaderRow]}>
                 <Text style={[styles.cell, styles.cellPair, styles.headerText]}>Pair</Text>
@@ -333,6 +412,22 @@ const styles = StyleSheet.create({
   chipText: { fontSize: 13, color: '#6b7280', textTransform: 'capitalize' },
   chipTextOn: { color: '#fff', fontWeight: '600' },
   dateRow: { flexDirection: 'row', marginBottom: 12 },
+  windowsSection: { marginBottom: 12 },
+  windowRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 },
+  windowLabel: { fontSize: 13, color: '#374151', fontWeight: '500', width: 90, textTransform: 'capitalize' },
+  windowValue: { fontSize: 13, color: '#111827', fontWeight: '600', minWidth: 52, textAlign: 'center' },
+  lagRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 16 },
+  lagBtn: {
+    width: 30, height: 30, borderRadius: 15,
+    backgroundColor: '#f3f4f6', alignItems: 'center', justifyContent: 'center',
+  },
+  lagBtnDisabled: { backgroundColor: '#f9fafb' },
+  lagValue: { fontSize: 16, fontWeight: '700', color: '#111827', minWidth: 24, textAlign: 'center' },
+  lagHint: { fontSize: 11, color: '#9ca3af', flex: 1 },
+  lagResultNote: {
+    fontSize: 11, color: '#6b7280', fontStyle: 'italic',
+    marginBottom: 8, paddingHorizontal: 2,
+  },
   dateInput: {
     flex: 1, borderWidth: 1, borderColor: '#e5e7eb', borderRadius: 8,
     paddingHorizontal: 10, paddingVertical: 8, fontSize: 13, color: '#374151',

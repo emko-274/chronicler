@@ -185,6 +185,8 @@ class CorrelationsRequest(BaseModel):
     types: list[str]
     start_date: Optional[str] = None
     end_date: Optional[str] = None
+    lag_days: int = 0
+    windows: dict[str, int] = {}   # type -> rolling window size (1 = no rolling)
 
 
 # ── Routes ───────────────────────────────────────────────────────────────────
@@ -270,7 +272,13 @@ def analyze_correlations(request: CorrelationsRequest, db: Session = Depends(get
     for type_a, type_b in combinations(request.types, 2):
         sa = stats_module.daily_series(logs_data, type_a, start, end)
         sb = stats_module.daily_series(logs_data, type_b, start, end)
-        vals_a, vals_b = stats_module.align_series(sa, sb)
+        wa = request.windows.get(type_a, 1)
+        wb = request.windows.get(type_b, 1)
+        if wa > 1:
+            sa = stats_module.rolling_aggregate(sa, wa)
+        if wb > 1:
+            sb = stats_module.rolling_aggregate(sb, wb)
+        vals_a, vals_b = stats_module.align_series(sa, sb, lag_days=request.lag_days)
         n = len(vals_a)
 
         if n < 5:
@@ -305,7 +313,14 @@ def analyze_correlations(request: CorrelationsRequest, db: Session = Depends(get
             "role": "user",
             "content": (
                 f"Here are Pearson correlation results between activity types:\n\n{pairs_text}\n\n"
-                "In 2-4 sentences, interpret what these correlations mean for the user's daily habits. "
+                + (f"Note: series B in each pair was lagged by {request.lag_days} day(s) "
+                   f"(each pair tests whether B from {request.lag_days} day(s) ago predicts today's A).\n\n"
+                   if request.lag_days else "")
+                + (f"Note: rolling windows applied — "
+                   + ", ".join(f"{t}: {w}-day sum" for t, w in request.windows.items() if w > 1)
+                   + ".\n\n"
+                   if any(w > 1 for w in request.windows.values()) else "")
+                + "In 2-4 sentences, interpret what these correlations mean for the user's daily habits. "
                 "Explicitly flag which results are statistically significant (p < 0.05) and which lack "
                 "enough data. Be concrete and actionable."
             ),
