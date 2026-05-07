@@ -189,6 +189,15 @@ class CorrelationsRequest(BaseModel):
     windows: dict[str, int] = {}   # type -> rolling window size (1 = no rolling)
 
 
+class RegressionRequest(BaseModel):
+    response: str
+    predictors: list[str]
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    log_transform: list[str] = []  # variable names to log-transform
+    windows: dict[str, int] = {}   # type -> rolling window size
+
+
 # ── Routes ───────────────────────────────────────────────────────────────────
 
 @router.post("/")
@@ -333,3 +342,72 @@ def analyze_correlations(request: CorrelationsRequest, db: Session = Depends(get
         "start_date": request.start_date,
         "end_date": request.end_date,
     }
+
+
+@router.post("/regression")
+def analyze_regression(request: RegressionRequest, db: Session = Depends(get_db)):
+    if not request.predictors:
+        raise HTTPException(status_code=422, detail="Provide at least one predictor.")
+
+    logs = db.query(ActivityLog).order_by(ActivityLog.started_at.desc()).limit(500).all()
+    logs_data = _hydrate(logs)
+    start = _parse_date(request.start_date)
+    end = _parse_date(request.end_date)
+
+    all_types = [request.response] + request.predictors
+
+    def prepare_series(t: str) -> dict[str, float]:
+        s = stats_module.daily_series(logs_data, t, start, end)
+        w = request.windows.get(t, 1)
+        if w > 1:
+            s = stats_module.rolling_aggregate(s, w)
+        if t in request.log_transform:
+            s = stats_module.log_transform(s)
+        return s
+
+    series_map = {t: prepare_series(t) for t in all_types}
+    aligned = stats_module.align_multiple([series_map[t] for t in all_types])
+
+    if not aligned or len(aligned[0]) < len(all_types) + 2:
+        n = len(aligned[0]) if aligned else 0
+        raise HTTPException(
+            status_code=422,
+            detail=f"Only {n} overlapping days — need at least {len(all_types) + 2} to fit this model."
+        )
+
+    y = aligned[0]
+    X_cols = aligned[1:]
+
+    try:
+        result = stats_module.run_ols(y, X_cols, request.predictors)
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"OLS failed: {e}")
+
+    transforms = [t for t in all_types if t in request.log_transform]
+    windows_used = {t: w for t, w in request.windows.items() if t in all_types and w > 1}
+
+    context_parts = [
+        f"OLS regression predicting {request.response} from: {', '.join(request.predictors)}.",
+        json.dumps(result, indent=2),
+    ]
+    if transforms:
+        context_parts.append(f"Log-transformed (log1p): {', '.join(transforms)}.")
+    if windows_used:
+        context_parts.append("Rolling windows: " + ", ".join(f"{t} {w}d sum" for t, w in windows_used.items()) + ".")
+
+    interp = client.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=512,
+        system=SYSTEM_PROMPT,
+        messages=[{
+            "role": "user",
+            "content": (
+                "\n\n".join(context_parts) + "\n\n"
+                "In 2-4 sentences interpret these regression results. Note which predictors are "
+                "statistically significant (p < 0.05), the overall model fit (R²), and what the "
+                "coefficients mean practically. Be concrete and actionable."
+            ),
+        }],
+    )
+
+    return {**result, "interpretation": interp.content[0].text}

@@ -78,6 +78,34 @@ export const analyzeCorrelations = (body: {
 }): Promise<CorrelationsResponse> =>
   api.post('/analyze/correlations', body).then((r) => r.data);
 
+export interface RegressionCoefficient {
+  name: string;
+  coef: number;
+  std_err: number;
+  t_stat: number;
+  p_value: number;
+}
+
+export interface RegressionResponse {
+  n: number;
+  r_squared: number;
+  adj_r_squared: number;
+  f_stat: number;
+  f_pvalue: number;
+  coefficients: RegressionCoefficient[];
+  interpretation: string;
+}
+
+export const runRegression = (body: {
+  response: string;
+  predictors: string[];
+  start_date?: string;
+  end_date?: string;
+  log_transform?: string[];
+  windows?: Record<string, number>;
+}): Promise<RegressionResponse> =>
+  api.post('/analyze/regression', body).then((r) => r.data);
+
 export interface Category {
   name: string;
   is_hidden: boolean;

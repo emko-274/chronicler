@@ -5,10 +5,13 @@ Each dict has keys: activity_type, started_at (datetime), ended_at (datetime|Non
 duration_minutes (int|None), notes (str|None).
 """
 
+import math
 from datetime import date as date_type, timedelta
 from statistics import mean, median, stdev
 from typing import Optional
+import numpy as np
 from scipy import stats as scipy_stats
+import statsmodels.api as sm
 
 
 def _filter(logs: list[dict], activity_type: str,
@@ -83,6 +86,54 @@ def align_series(
             result_a.append(a[d_str])
             result_b.append(b[lagged])
     return result_a, result_b
+
+
+def log_transform(series: dict[str, float]) -> dict[str, float]:
+    """Apply log1p (natural log of 1+x) to each value — handles zeros safely."""
+    return {k: math.log1p(v) for k, v in series.items()}
+
+
+def align_multiple(series_list: list[dict[str, float]]) -> list[list[float]]:
+    """
+    Find dates present in ALL series and return one value-list per series,
+    all in chronological order. Returns [] when no common dates exist.
+    """
+    if not series_list:
+        return []
+    common = sorted(set.intersection(*(set(s.keys()) for s in series_list)))
+    return [[s[d] for d in common] for s in series_list]
+
+
+def run_ols(
+    y: list[float],
+    X_cols: list[list[float]],
+    predictor_names: list[str],
+) -> dict:
+    """
+    OLS regression of y on X_cols (intercept added automatically).
+    Returns n, R², adjusted R², F-stat, F p-value, and one row per term.
+    """
+    X = sm.add_constant(np.column_stack(X_cols), has_constant='add')
+    model = sm.OLS(y, X).fit()
+    terms = ["intercept"] + predictor_names
+    coefficients = [
+        {
+            "name": terms[i],
+            "coef": round(float(model.params[i]), 4),
+            "std_err": round(float(model.bse[i]), 4),
+            "t_stat": round(float(model.tvalues[i]), 3),
+            "p_value": round(float(model.pvalues[i]), 4),
+        }
+        for i in range(len(terms))
+    ]
+    return {
+        "n": int(len(y)),
+        "r_squared": round(float(model.rsquared), 4),
+        "adj_r_squared": round(float(model.rsquared_adj), 4),
+        "f_stat": round(float(model.fvalue), 3),
+        "f_pvalue": round(float(model.f_pvalue), 4),
+        "coefficients": coefficients,
+    }
 
 
 def compute_pearson(vals_a: list[float], vals_b: list[float]) -> dict:

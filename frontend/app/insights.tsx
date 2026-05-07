@@ -11,7 +11,7 @@ import {
   Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { analyzeData, analyzeCorrelations, getCategories, CorrelationsResponse } from '@/lib/api';
+import { analyzeData, analyzeCorrelations, runRegression, getCategories, CorrelationsResponse, RegressionResponse } from '@/lib/api';
 
 const EXAMPLE_QUESTIONS = [
   'How much sleep did I average this week?',
@@ -281,6 +281,220 @@ function CorrelationPanel() {
   );
 }
 
+// ── Regression panel ────────────────────────────────────────────────────────
+
+function sigStars(p: number): string {
+  if (p < 0.001) return '***';
+  if (p < 0.01)  return '**';
+  if (p < 0.05)  return '*';
+  return '';
+}
+
+function RegressionPanel() {
+  const [open, setOpen] = useState(false);
+  const [categories, setCategories] = useState<string[]>([]);
+  const [response, setResponse] = useState<string>('');
+  const [predictors, setPredictors] = useState<Set<string>>(new Set());
+  const [logVars, setLogVars] = useState<Set<string>>(new Set());
+  const [windows, setWindows] = useState<Record<string, number>>({});
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<RegressionResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    getCategories()
+      .then((cats) => setCategories(cats.filter((c) => !c.is_hidden).map((c) => c.name)))
+      .catch(() => {});
+  }, []);
+
+  const allSelected = response ? [response, ...Array.from(predictors)] : [];
+  const getWindow = (t: string) => windows[t] ?? 1;
+  const setWindow = (t: string, w: number) =>
+    setWindows(prev => ({ ...prev, [t]: Math.max(1, Math.min(30, w)) }));
+  const toggleLog = (t: string) =>
+    setLogVars(prev => { const n = new Set(prev); n.has(t) ? n.delete(t) : n.add(t); return n; });
+  const togglePredictor = (t: string) =>
+    setPredictors(prev => { const n = new Set(prev); n.has(t) ? n.delete(t) : n.add(t); return n; });
+
+  const run = async () => {
+    if (!response || predictors.size === 0) {
+      setError('Choose a response variable and at least one predictor.');
+      return;
+    }
+    setLoading(true); setError(null); setResult(null);
+    try {
+      const activeWindows = Object.fromEntries(
+        Object.entries(windows).filter(([t, w]) => allSelected.includes(t) && w > 1)
+      );
+      const res = await runRegression({
+        response,
+        predictors: Array.from(predictors),
+        start_date: startDate || undefined,
+        end_date: endDate || undefined,
+        log_transform: allSelected.filter(t => logVars.has(t)),
+        windows: Object.keys(activeWindows).length ? activeWindows : undefined,
+      });
+      setResult(res);
+    } catch (e: any) {
+      setError(e?.response?.data?.detail ?? 'Could not run regression. Is the backend running?');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <View style={styles.corrPanel}>
+      <TouchableOpacity style={styles.corrHeader} onPress={() => setOpen(o => !o)}>
+        <Text style={styles.corrTitle}>Multivariate Regression</Text>
+        <Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={18} color="#6b7280" />
+      </TouchableOpacity>
+
+      {open && (
+        <View style={styles.corrBody}>
+          {/* Response variable */}
+          <Text style={styles.corrLabel}>Response variable (Y)</Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipScroll}>
+            {categories.map(cat => (
+              <TouchableOpacity
+                key={cat}
+                style={[styles.chip, response === cat && styles.chipOn]}
+                onPress={() => { setResponse(cat); setPredictors(prev => { const n = new Set(prev); n.delete(cat); return n; }); }}
+              >
+                <Text style={[styles.chipText, response === cat && styles.chipTextOn]}>{cat}</Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+
+          {/* Predictors */}
+          <Text style={styles.corrLabel}>Predictor variables (X)</Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipScroll}>
+            {categories.filter(c => c !== response).map(cat => {
+              const on = predictors.has(cat);
+              return (
+                <TouchableOpacity key={cat} style={[styles.chip, on && styles.chipOn]} onPress={() => togglePredictor(cat)}>
+                  <Text style={[styles.chipText, on && styles.chipTextOn]}>{cat}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+
+          {/* Log transform */}
+          {allSelected.length > 0 && (
+            <>
+              <Text style={styles.corrLabel}>Log transform (log1p)</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={[styles.chipScroll, { marginBottom: 4 }]}>
+                {allSelected.map(t => {
+                  const on = logVars.has(t);
+                  return (
+                    <TouchableOpacity key={t} style={[styles.chip, on && styles.chipOn]} onPress={() => toggleLog(t)}>
+                      <Text style={[styles.chipText, on && styles.chipTextOn]}>{t}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            </>
+          )}
+
+          {/* Rolling windows */}
+          {allSelected.length > 0 && (
+            <View style={styles.windowsSection}>
+              <Text style={styles.corrLabel}>Rolling window (optional)</Text>
+              {allSelected.map(t => {
+                const w = getWindow(t);
+                return (
+                  <View key={t} style={styles.windowRow}>
+                    <Text style={styles.windowLabel}>{t}</Text>
+                    <TouchableOpacity onPress={() => setWindow(t, w - 1)} disabled={w <= 1}
+                      style={[styles.lagBtn, w <= 1 && styles.lagBtnDisabled]} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                      <Ionicons name="remove" size={14} color={w <= 1 ? '#d1d5db' : '#374151'} />
+                    </TouchableOpacity>
+                    <Text style={styles.windowValue}>{w === 1 ? 'none' : `${w}d sum`}</Text>
+                    <TouchableOpacity onPress={() => setWindow(t, w + 1)} disabled={w >= 30}
+                      style={[styles.lagBtn, w >= 30 && styles.lagBtnDisabled]} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                      <Ionicons name="add" size={14} color={w >= 30 ? '#d1d5db' : '#374151'} />
+                    </TouchableOpacity>
+                  </View>
+                );
+              })}
+            </View>
+          )}
+
+          {/* Date range */}
+          <Text style={styles.corrLabel}>Date range (optional)</Text>
+          {Platform.OS === 'web' ? (
+            <View style={styles.dateRow}>
+              {/* @ts-ignore */}
+              <input type="date" value={startDate} onChange={(e: any) => setStartDate(e.target.value)}
+                style={{ ...dateInputStyle, marginRight: 8 }} />
+              {/* @ts-ignore */}
+              <input type="date" value={endDate} onChange={(e: any) => setEndDate(e.target.value)}
+                style={dateInputStyle} />
+            </View>
+          ) : (
+            <View style={styles.dateRow}>
+              <TextInput style={[styles.dateInput, { marginRight: 8 }]} placeholder="Start YYYY-MM-DD"
+                value={startDate} onChangeText={setStartDate} />
+              <TextInput style={styles.dateInput} placeholder="End YYYY-MM-DD"
+                value={endDate} onChangeText={setEndDate} />
+            </View>
+          )}
+
+          {/* Run button */}
+          <TouchableOpacity
+            style={[styles.runBtn, (loading || !response || predictors.size === 0) && styles.runBtnOff]}
+            onPress={run} disabled={loading || !response || predictors.size === 0}
+          >
+            {loading
+              ? <ActivityIndicator size="small" color="#fff" />
+              : <Text style={styles.runBtnText}>Run Regression</Text>}
+          </TouchableOpacity>
+
+          {error && <Text style={styles.corrError}>{error}</Text>}
+
+          {/* Results */}
+          {result && (
+            <View style={styles.results}>
+              {/* Summary row */}
+              <View style={styles.regSummaryRow}>
+                <Text style={styles.regStat}>n = {result.n}</Text>
+                <Text style={styles.regStat}>R² = {result.r_squared.toFixed(3)}</Text>
+                <Text style={styles.regStat}>adj R² = {result.adj_r_squared.toFixed(3)}</Text>
+                <Text style={styles.regStat}>F = {result.f_stat.toFixed(2)} (p={result.f_pvalue.toFixed(3)})</Text>
+              </View>
+
+              {/* Coefficient table */}
+              <View style={[styles.tableRow, styles.tableHeaderRow]}>
+                <Text style={[styles.cell, styles.cellPair, styles.headerText]}>Term</Text>
+                <Text style={[styles.cell, styles.headerText]}>Coef</Text>
+                <Text style={[styles.cell, styles.headerText]}>SE</Text>
+                <Text style={[styles.cell, styles.headerText]}>t</Text>
+                <Text style={[styles.cell, styles.headerText]}>p</Text>
+              </View>
+              {result.coefficients.map((row, i) => (
+                <View key={i} style={[styles.tableRow, i % 2 === 1 && { backgroundColor: '#fafafa' }]}>
+                  <Text style={[styles.cell, styles.cellPair]} numberOfLines={1}>{row.name}</Text>
+                  <Text style={styles.cell}>{row.coef.toFixed(3)}</Text>
+                  <Text style={styles.cell}>{row.std_err.toFixed(3)}</Text>
+                  <Text style={styles.cell}>{row.t_stat.toFixed(2)}</Text>
+                  <Text style={[styles.cell, row.p_value < 0.05 && styles.sigCell]}>
+                    {row.p_value.toFixed(3)}{sigStars(row.p_value)}
+                  </Text>
+                </View>
+              ))}
+
+              <View style={styles.interpretBox}>
+                <Text style={styles.interpretText}>{result.interpretation}</Text>
+              </View>
+            </View>
+          )}
+        </View>
+      )}
+    </View>
+  );
+}
+
 // ── Main screen ─────────────────────────────────────────────────────────────
 
 export default function InsightsScreen() {
@@ -320,6 +534,7 @@ export default function InsightsScreen() {
         contentContainerStyle={styles.messagesContent}
       >
         <CorrelationPanel />
+        <RegressionPanel />
 
         {messages.length === 0 && (
           <View>
@@ -465,4 +680,7 @@ const styles = StyleSheet.create({
   },
   interpretBox: { marginTop: 12, padding: 12, backgroundColor: '#eef2ff', borderRadius: 8 },
   interpretText: { fontSize: 13, color: '#1e1b4b', lineHeight: 20 },
+  regSummaryRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 10 },
+  regStat: { fontSize: 12, color: '#374151', backgroundColor: '#f3f4f6', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3, fontWeight: '600' },
+  sigCell: { color: '#059669', fontWeight: '700' },
 });
