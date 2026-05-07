@@ -283,6 +283,7 @@ export default function LogScreen() {
   const [quantityUnit, setQuantityUnit] = useState('');
   const [saving, setSaving] = useState(false);
   const [picker, setPicker] = useState<PickerState>(null);
+  const [typeWarnings, setTypeWarnings] = useState<string[]>([]);
 
   type ConfirmState = {
     title: string;
@@ -310,6 +311,54 @@ export default function LogScreen() {
       })
       .catch(() => {}); // keep builtins if backend is unreachable
   }, []);
+
+  // ── Attribute consistency check ────────────────────────────────────────────
+
+  useEffect(() => {
+    if (!activityType) { setTypeWarnings([]); return; }
+    const timer = setTimeout(async () => {
+      try {
+        const existing = await getLogs(activityType, 50);
+        if (existing.length === 0) { setTypeWarnings([]); return; }
+        const warnings: string[] = [];
+
+        const timedCount = existing.filter(l => l.duration_minutes != null && l.duration_minutes > 0).length;
+        const untimedCount = existing.filter(l => l.extra_data?.untimed === true).length;
+        if (isDurationZero && timedCount > 0 && timedCount >= untimedCount) {
+          warnings.push(`Most "${activityType}" entries have a duration — consider Timed`);
+        } else if (!isDurationZero && untimedCount > timedCount && timedCount === 0) {
+          warnings.push(`Previous "${activityType}" entries are untimed`);
+        }
+
+        const withQty = existing.filter(l => typeof l.extra_data?.quantity === 'number');
+        const mostHaveQty = withQty.length > existing.length / 2;
+        if (showQuantity && quantityText.trim()) {
+          if (!mostHaveQty) {
+            warnings.push(`Previous "${activityType}" entries don't include a quantity`);
+          } else {
+            const unitCounts = new Map<string, number>();
+            withQty.forEach(l => {
+              const u = String(l.extra_data?.unit ?? '');
+              unitCounts.set(u, (unitCounts.get(u) ?? 0) + 1);
+            });
+            let commonUnit = ''; let maxCount = 0;
+            unitCounts.forEach((c, u) => { if (c > maxCount) { maxCount = c; commonUnit = u; } });
+            const myUnit = quantityUnit.trim();
+            if (commonUnit !== myUnit) {
+              warnings.push(`Previous entries used "${commonUnit || 'no unit'}", you selected "${myUnit || 'no unit'}"`);
+            }
+          }
+        } else if (!showQuantity && mostHaveQty) {
+          warnings.push(`Most "${activityType}" entries include a quantity`);
+        }
+
+        setTypeWarnings(warnings);
+      } catch {
+        setTypeWarnings([]);
+      }
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [activityType, isDurationZero, showQuantity, quantityText, quantityUnit]);
 
   // ── Category search logic ───────────────────────────────────────────────────
 
@@ -534,6 +583,18 @@ export default function LogScreen() {
         </View>
       ) : null}
 
+      {typeWarnings.length > 0 && activityType ? (
+        <View style={styles.warningBox}>
+          <View style={styles.warningHeader}>
+            <Ionicons name="warning-outline" size={14} color="#92400e" />
+            <Text style={styles.warningTitle}>Attribute mismatch</Text>
+          </View>
+          {typeWarnings.map((w, i) => (
+            <Text key={i} style={styles.warningItem}>{w}</Text>
+          ))}
+        </View>
+      ) : null}
+
       {isDurationZero ? (
         /* ── 0-min path: date only ── */
         <>
@@ -744,6 +805,16 @@ const styles = StyleSheet.create({
   segBtnOn: { backgroundColor: '#fff', shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 1, elevation: 1 },
   segBtnText: { fontSize: 12, fontWeight: '500', color: '#9ca3af' },
   segBtnTextOn: { color: '#374151', fontWeight: '600' },
+
+  // Attribute mismatch warning
+  warningBox: {
+    backgroundColor: '#fffbeb', borderRadius: 8,
+    borderWidth: 1, borderColor: '#fcd34d',
+    padding: 10, marginTop: 10, gap: 3,
+  },
+  warningHeader: { flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 2 },
+  warningTitle: { fontSize: 12, fontWeight: '700', color: '#92400e' },
+  warningItem: { fontSize: 12, color: '#78350f', paddingLeft: 19 },
 
   // Confirm modal
   confirmOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'center', alignItems: 'center', padding: 24 },

@@ -544,7 +544,7 @@ interface TooltipState {
   barH: number;
 }
 
-const TOOLTIP_W = 152;
+const TOOLTIP_W = 210;
 const TOOLTIP_PAD = 8;
 const FLIPPED_ROW_H = 24; // height of each date row in flipped mode
 const HMAP_SLOTS = 48;    // 30-min buckets for the heatmap density layer
@@ -634,7 +634,7 @@ function TimelineChart({
 
   const hideTipDelayed = () => {
     if (hideDelayRef.current) clearTimeout(hideDelayRef.current);
-    hideDelayRef.current = setTimeout(() => setTooltip(null), 200);
+    hideDelayRef.current = setTimeout(() => setTooltip(null), 800);
   };
   const cancelHide = () => {
     if (hideDelayRef.current) clearTimeout(hideDelayRef.current);
@@ -1119,7 +1119,7 @@ function TimelineChart({
                           <G key={log.id + (isContinuation ? '-cont' : '')}>
                             <Rect
                               x={barX} y={barY} width={barW} height={barH}
-                              fill={color} rx={2} opacity={isHovered ? 1 : 0.85}
+                              fill={color} rx={2} opacity={0.85}
                               // @ts-ignore — onMouseEnter/Leave valid on web SVG
                               {...interactionProps}
                             />
@@ -1137,7 +1137,7 @@ function TimelineChart({
                               fill={isUntimed ? 'none' : color}
                               stroke={isUntimed ? color : 'none'}
                               strokeWidth={isUntimed ? 1.5 : 0}
-                              opacity={isHovered ? 0.9 : isUntimed ? 0.4 : 0.85}
+                              opacity={isUntimed ? 0.4 : 0.85}
                               // @ts-ignore
                               {...interactionProps}
                             />
@@ -1226,8 +1226,8 @@ function TimelineChart({
             ? (tooltip.log.notes.length > 40 ? tooltip.log.notes.slice(0, 40) + '…' : tooltip.log.notes)
             : null;
           const lines = [timeStr, dur, qty, noteSnippet].filter(Boolean) as string[];
-          // Estimate height: title(18) + lines + edit button(26) + padding(16)
-          const tipH = 18 + lines.length * 15 + 26 + 16;
+          // Estimate height: title row(18) + lines + padding(12)
+          const tipH = 18 + lines.length * 13 + 12;
           const tx = Math.max(0, Math.min(tooltip.barX, totalChartW - TOOLTIP_W));
           const rawLeft = tx - scrollXSnap + TIME_LABEL_W;
           const overlayLeft = Math.max(0, Math.min(rawLeft, TIME_LABEL_W + viewportW - TOOLTIP_W));
@@ -1246,7 +1246,8 @@ function TimelineChart({
                 borderRadius: 8,
                 borderWidth: 1,
                 borderColor: '#d1d5db',
-                padding: 10,
+                paddingHorizontal: 10,
+                paddingVertical: 7,
                 zIndex: 20,
                 shadowColor: '#000',
                 shadowOpacity: 0.08,
@@ -1257,35 +1258,35 @@ function TimelineChart({
               onMouseEnter={cancelHide}
               onMouseLeave={() => setTooltip(null)}
             >
-              <Text style={{ fontSize: 11, fontWeight: '700', color: '#111827', marginBottom: 4 }}>
-                {tooltip.log.activity_type.charAt(0).toUpperCase() + tooltip.log.activity_type.slice(1)}
-              </Text>
-              {lines.map((line, i) => (
-                <Text key={i} style={{ fontSize: 10, color: '#6b7280', lineHeight: 15 }}>{line}</Text>
-              ))}
-              <View style={{ flexDirection: 'row', gap: 6, marginTop: 8 }}>
-                <TouchableOpacity
-                  onPress={() => { setTooltip(null); onEdit(tooltip.log); }}
-                  style={{ padding: 5, borderRadius: 5, backgroundColor: '#f3f4f6' }}
-                  hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
-                >
-                  <Ionicons name="pencil-outline" size={13} color="#6366f1" />
-                </TouchableOpacity>
-                <TouchableOpacity
-                  onPress={async () => {
-                    const log = tooltip.log;
-                    const ok = window.confirm(`Delete this ${log.activity_type} entry?`);
-                    if (!ok) return;
-                    setTooltip(null);
-                    await deleteLog(log.id);
-                    onDelete();
-                  }}
-                  style={{ padding: 5, borderRadius: 5, backgroundColor: '#f3f4f6' }}
-                  hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
-                >
-                  <Ionicons name="trash-outline" size={13} color="#ef4444" />
-                </TouchableOpacity>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 3 }}>
+                <Text style={{ fontSize: 11, fontWeight: '700', color: '#111827' }}>
+                  {tooltip.log.activity_type.charAt(0).toUpperCase() + tooltip.log.activity_type.slice(1)}
+                </Text>
+                <View style={{ flexDirection: 'row', gap: 4 }}>
+                  <TouchableOpacity
+                    onPress={() => { setTooltip(null); onEdit(tooltip.log); }}
+                    hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                  >
+                    <Ionicons name="pencil-outline" size={12} color="#9ca3af" />
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={async () => {
+                      const log = tooltip.log;
+                      const ok = window.confirm(`Delete this ${log.activity_type} entry?`);
+                      if (!ok) return;
+                      setTooltip(null);
+                      await deleteLog(log.id);
+                      onDelete();
+                    }}
+                    hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                  >
+                    <Ionicons name="trash-outline" size={12} color="#9ca3af" />
+                  </TouchableOpacity>
+                </View>
               </View>
+              {lines.map((line, i) => (
+                <Text key={i} style={{ fontSize: 10, color: '#6b7280', lineHeight: 13 }}>{line}</Text>
+              ))}
             </View>
           );
         })()}
@@ -1378,7 +1379,21 @@ function ActivityChart({
       });
   }
 
-  if (byDate.size === 0) {
+  // Days that have at least one entry missing the primary attribute for this type
+  // (e.g. untimed entries when the type generally has duration, or entries without quantity)
+  const misalignedDays = new Set<string>();
+  if (!useCountMode && (hasDuration || hasQuantity)) {
+    logs
+      .filter((l) => {
+        if (l.activity_type !== type) return false;
+        if (hasDuration) return l.duration_minutes == null || l.duration_minutes === 0;
+        if (hasQuantity) return typeof l.extra_data?.quantity !== 'number';
+        return false;
+      })
+      .forEach((l) => misalignedDays.add(dayKey(new Date(l.started_at))));
+  }
+
+  if (byDate.size === 0 && misalignedDays.size === 0) {
     return (
       <View style={styles.chartPanelItem}>
         <TouchableOpacity style={styles.chartHeader} onPress={onToggleCollapsed} activeOpacity={0.7}>
@@ -1618,6 +1633,18 @@ function ActivityChart({
                     {...dotProps}
                   />
                 </G>
+              );
+            })}
+
+            {/* Hollow markers for days that have entries missing the primary attribute */}
+            {[...misalignedDays].map((key) => {
+              const idx = days.findIndex(d => d.key === key);
+              if (idx < 0) return null;
+              return (
+                <Circle key={`mis-${key}`}
+                  cx={xOf(idx)} cy={baseY - dotR} r={dotR}
+                  fill="none" stroke="rgba(255,255,255,0.6)" strokeWidth={1.5}
+                />
               );
             })}
 
