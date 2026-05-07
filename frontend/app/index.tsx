@@ -136,7 +136,7 @@ function EditDateOnlyInput({ value, onChange }: { value: Date; onChange: (d: Dat
   );
 }
 
-const PRESET_UNITS = ['µg', 'mg', 'g', 'kg', 'ml', 'L'];
+const PRESET_UNITS = ['µg', 'mg', 'g', 'kg', 'ml', 'L', 'bpm', 'rpm', 'ppm', 'mmHg', '%', 'dB'];
 
 function UnitPicker({ value, onChange }: { value: string; onChange: (u: string) => void }) {
   const [open, setOpen] = useState(false);
@@ -553,6 +553,7 @@ function TimelineChart({
   logs,
   colorMap,
   visibleTypes,
+  typeOrder,
   onEdit,
   onDelete,
   colWidth,
@@ -567,6 +568,7 @@ function TimelineChart({
   logs: ActivityLog[];
   colorMap: Map<string, string[]>;
   visibleTypes: Set<string>;
+  typeOrder: string[];
   onEdit: (log: ActivityLog) => void;
   onDelete: () => void;
   colWidth: number;
@@ -1057,7 +1059,13 @@ function TimelineChart({
 
               {days.map((day, colIdx) => {
                 const colX = colIdx * colWidth;
-                const entries = (byDay.get(day) ?? []).filter(l => visibleTypes.has(l.activity_type));
+                const entries = (byDay.get(day) ?? [])
+                  .filter(l => visibleTypes.has(l.activity_type))
+                  .sort((a, b) => {
+                    const ai = typeOrder.indexOf(a.activity_type);
+                    const bi = typeOrder.indexOf(b.activity_type);
+                    return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
+                  });
                 const d = new Date(day + 'T12:00:00');
                 const showLabel = colIdx % labelEvery === 0;
                 const barW = Math.max(1, colWidth - BAR_PADDING * 2);
@@ -1679,20 +1687,39 @@ function TypeToggles({
   visible,
   colorMap,
   onToggle,
+  onReorder,
 }: {
   types: string[];
   visible: Set<string>;
   colorMap: Map<string, string[]>;
   onToggle: (type: string) => void;
+  onReorder: (newOrder: string[]) => void;
 }) {
+  const [dragType, setDragType] = useState<string | null>(null);
+  const [overType, setOverType] = useState<string | null>(null);
+
+  const handleDrop = (target: string) => {
+    if (!dragType || dragType === target) return;
+    const arr = [...types];
+    const fromIdx = arr.indexOf(dragType);
+    const toIdx = arr.indexOf(target);
+    arr.splice(fromIdx, 1);
+    arr.splice(toIdx, 0, dragType);
+    onReorder(arr);
+    setDragType(null);
+    setOverType(null);
+  };
+
   if (types.length === 0) return null;
   return (
     <View style={styles.toggleSection}>
-      <Text style={styles.sectionLabel}>Show / Hide</Text>
+      <Text style={styles.sectionLabel}>Show / Hide · drag to reorder layers</Text>
       <ScrollView horizontal showsHorizontalScrollIndicator={false}>
         {types.map((type) => {
           const active = visible.has(type);
           const color = colorMap.get(type)?.[0] ?? '#6366f1';
+          const isDragging = dragType === type;
+          const isOver = overType === type && dragType !== type;
           return (
             <TouchableOpacity
               key={type}
@@ -1700,7 +1727,18 @@ function TypeToggles({
               style={[
                 styles.toggleChip,
                 active ? { backgroundColor: color } : styles.toggleChipOff,
+                isDragging && { opacity: 0.35 },
+                isOver && { borderWidth: 2, borderColor: '#6366f1', borderStyle: 'dashed' } as any,
+                Platform.OS === 'web' && ({ cursor: 'grab' } as any),
               ]}
+              // @ts-ignore — HTML5 drag props, web only
+              {...(Platform.OS === 'web' ? {
+                draggable: true,
+                onDragStart: (e: any) => { e.dataTransfer.setData('text', type); setDragType(type); },
+                onDragOver:  (e: any) => { e.preventDefault(); if (overType !== type) setOverType(type); },
+                onDrop:      (e: any) => { e.preventDefault(); handleDrop(type); },
+                onDragEnd:   ()       => { setDragType(null); setOverType(null); },
+              } : {})}
             >
               <Text style={[styles.toggleChipText, !active && styles.toggleChipTextOff]}>
                 {type}
@@ -1870,6 +1908,7 @@ export default function DashboardScreen() {
   const [logs, setLogs] = useState<ActivityLog[]>([]);
   const [loading, setLoading] = useState(true);
   const [visibleTypes, setVisibleTypes] = useState<Set<string>>(new Set());
+  const [typeOrder, setTypeOrder] = useState<string[]>([]);
   const [editingLog, setEditingLog] = useState<ActivityLog | null>(null);
   const [collapsedCharts, setCollapsedCharts] = useState<Set<string>>(new Set());
 
@@ -1927,6 +1966,15 @@ export default function DashboardScreen() {
         const next = new Set(prev);
         data.forEach((l) => next.add(l.activity_type));
         return next;
+      });
+      // Append any brand-new types to the end of the user's layer order
+      setTypeOrder((prev) => {
+        const existing = new Set(prev);
+        const brandNew: string[] = [];
+        [...data].reverse().forEach((l) => {
+          if (!existing.has(l.activity_type)) { existing.add(l.activity_type); brandNew.push(l.activity_type); }
+        });
+        return brandNew.length ? [...prev, ...brandNew] : prev;
       });
     } finally {
       setLoading(false);
@@ -2000,16 +2048,18 @@ export default function DashboardScreen() {
             <Text style={styles.heading}>Dashboard</Text>
 
             <TypeToggles
-              types={uniqueTypes}
+              types={typeOrder.filter(t => uniqueTypes.includes(t))}
               visible={visibleTypes}
               colorMap={colorMap}
               onToggle={toggleType}
+              onReorder={setTypeOrder}
             />
 
             <TimelineChart
               logs={logs}
               colorMap={colorMap}
               visibleTypes={visibleTypes}
+              typeOrder={typeOrder}
               onEdit={setEditingLog}
               onDelete={fetchLogs}
               colWidth={colWidth}

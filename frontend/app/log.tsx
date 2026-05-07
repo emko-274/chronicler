@@ -98,7 +98,7 @@ function WebDateOnlyInput({ value, onChange }: { value: Date; onChange: (d: Date
   );
 }
 
-const PRESET_UNITS = ['µg', 'mg', 'g', 'kg', 'ml', 'L'];
+const PRESET_UNITS = ['µg', 'mg', 'g', 'kg', 'ml', 'L', 'bpm', 'rpm', 'ppm', 'mmHg', '%', 'dB'];
 
 function UnitPicker({ value, onChange }: { value: string; onChange: (u: string) => void }) {
   const [open, setOpen] = useState(false);
