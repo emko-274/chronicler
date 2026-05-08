@@ -8,7 +8,8 @@ from itertools import combinations
 import json
 
 from database import get_db
-from models import ActivityLog
+from models import ActivityLog, User
+from auth import get_current_user
 import stats as stats_module
 import anthropic
 import os
@@ -202,8 +203,12 @@ class RegressionRequest(BaseModel):
 # ── Routes ───────────────────────────────────────────────────────────────────
 
 @router.post("/")
-def analyze(request: AnalyzeRequest, db: Session = Depends(get_db)):
-    logs = db.query(ActivityLog).order_by(ActivityLog.started_at.desc()).limit(500).all()
+def analyze(
+    request: AnalyzeRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    logs = db.query(ActivityLog).filter(ActivityLog.user_id == current_user.id).order_by(ActivityLog.started_at.desc()).limit(500).all()
     if not logs:
         return {"answer": "No activity data found. Log some activities first!"}
 
@@ -268,11 +273,15 @@ def analyze(request: AnalyzeRequest, db: Session = Depends(get_db)):
 
 
 @router.post("/correlations")
-def analyze_correlations(request: CorrelationsRequest, db: Session = Depends(get_db)):
+def analyze_correlations(
+    request: CorrelationsRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     if len(request.types) < 2:
         raise HTTPException(status_code=422, detail="Provide at least 2 activity types.")
 
-    logs = db.query(ActivityLog).order_by(ActivityLog.started_at.desc()).limit(500).all()
+    logs = db.query(ActivityLog).filter(ActivityLog.user_id == current_user.id).order_by(ActivityLog.started_at.desc()).limit(500).all()
     logs_data = _hydrate(logs)
 
     start = _parse_date(request.start_date)
@@ -346,11 +355,15 @@ def analyze_correlations(request: CorrelationsRequest, db: Session = Depends(get
 
 
 @router.post("/regression")
-def analyze_regression(request: RegressionRequest, db: Session = Depends(get_db)):
+def analyze_regression(
+    request: RegressionRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     if not request.predictors:
         raise HTTPException(status_code=422, detail="Provide at least one predictor.")
 
-    logs = db.query(ActivityLog).order_by(ActivityLog.started_at.desc()).limit(500).all()
+    logs = db.query(ActivityLog).filter(ActivityLog.user_id == current_user.id).order_by(ActivityLog.started_at.desc()).limit(500).all()
     logs_data = _hydrate(logs)
     start = _parse_date(request.start_date)
     end = _parse_date(request.end_date)

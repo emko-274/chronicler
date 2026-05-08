@@ -4,7 +4,8 @@ from pydantic import BaseModel
 from datetime import datetime
 from typing import Optional
 from database import get_db
-from models import ActivityLog, HiddenCategory
+from models import ActivityLog, HiddenCategory, User
+from auth import get_current_user
 
 router = APIRouter()
 
@@ -41,13 +42,16 @@ class ActivityLogResponse(BaseModel):
 
 
 @router.post("/", response_model=ActivityLogResponse)
-def create_log(log: ActivityLogCreate, db: Session = Depends(get_db)):
-    # Auto-calculate duration if start and end are provided and duration wasn't explicitly set
+def create_log(
+    log: ActivityLogCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     if log.ended_at and log.duration_minutes is None:
         delta = log.ended_at - log.started_at
         log.duration_minutes = int(delta.total_seconds() / 60)
 
-    db_log = ActivityLog(**log.model_dump())
+    db_log = ActivityLog(**log.model_dump(), user_id=current_user.id)
     db.add(db_log)
     db.commit()
     db.refresh(db_log)
@@ -61,12 +65,13 @@ def get_logs(
     limit: int = 100,
     include_hidden: bool = False,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
-    query = db.query(ActivityLog)
+    query = db.query(ActivityLog).filter(ActivityLog.user_id == current_user.id)
     if activity_type:
         query = query.filter(ActivityLog.activity_type == activity_type)
     if not include_hidden:
-        hidden = {h.name for h in db.query(HiddenCategory).all()}
+        hidden = {h.name for h in db.query(HiddenCategory).filter(HiddenCategory.user_id == current_user.id).all()}
         if hidden:
             query = query.filter(ActivityLog.activity_type.notin_(hidden))
     results = query.order_by(ActivityLog.started_at.desc()).limit(limit).all()
@@ -76,15 +81,22 @@ def get_logs(
 
 
 @router.put("/{log_id}", response_model=ActivityLogResponse)
-def update_log(log_id: str, update: ActivityLogUpdate, db: Session = Depends(get_db)):
-    log = db.query(ActivityLog).filter(ActivityLog.id == log_id).first()
+def update_log(
+    log_id: str,
+    update: ActivityLogUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    log = db.query(ActivityLog).filter(
+        ActivityLog.id == log_id,
+        ActivityLog.user_id == current_user.id,
+    ).first()
     if not log:
         raise HTTPException(status_code=404, detail="Log not found")
 
     for field, value in update.model_dump(exclude_unset=True).items():
         setattr(log, field, value)
 
-    # Recalculate duration whenever start/end change
     if log.started_at and log.ended_at:
         delta = log.ended_at - log.started_at
         log.duration_minutes = int(delta.total_seconds() / 60)
@@ -98,15 +110,29 @@ def update_log(log_id: str, update: ActivityLogUpdate, db: Session = Depends(get
 
 
 @router.delete("/by-type/{activity_type}")
-def delete_logs_by_type(activity_type: str, db: Session = Depends(get_db)):
-    deleted = db.query(ActivityLog).filter(ActivityLog.activity_type == activity_type).delete()
+def delete_logs_by_type(
+    activity_type: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    deleted = db.query(ActivityLog).filter(
+        ActivityLog.activity_type == activity_type,
+        ActivityLog.user_id == current_user.id,
+    ).delete()
     db.commit()
     return {"deleted": deleted}
 
 
 @router.delete("/{log_id}")
-def delete_log(log_id: str, db: Session = Depends(get_db)):
-    log = db.query(ActivityLog).filter(ActivityLog.id == log_id).first()
+def delete_log(
+    log_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    log = db.query(ActivityLog).filter(
+        ActivityLog.id == log_id,
+        ActivityLog.user_id == current_user.id,
+    ).first()
     if not log:
         raise HTTPException(status_code=404, detail="Log not found")
     db.delete(log)

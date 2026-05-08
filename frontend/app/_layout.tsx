@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Tabs, usePathname } from 'expo-router';
 import {
   View, Modal, TouchableOpacity, Text, StyleSheet,
@@ -6,6 +6,9 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import NotesScreen from './notes';
+import LoginScreen from '../components/LoginScreen';
+import { getStoredToken, storeToken, clearToken, UserInfo } from '../lib/auth';
+import { setApiToken } from '../lib/api';
 
 type IoniconName = React.ComponentProps<typeof Ionicons>['name'];
 
@@ -19,7 +22,7 @@ const { width: SW, height: SH } = Dimensions.get('window');
 const INIT_W = Math.min(600, SW - 16);
 const INIT_H = Math.round(SH * 0.74);
 const INIT_X = SW - INIT_W - 8;
-const INIT_Y = SH - INIT_H - (Platform.OS === 'ios' ? 90 : 68);
+const INIT_Y = SH - INIT_H;          // bottom edge flush with viewport — tab bar overlaps it
 const FAB_BOTTOM = Platform.OS === 'ios' ? 90 : 68;
 const MIN_W = 320;
 const MIN_H = 300;
@@ -27,6 +30,28 @@ const MIN_H = 300;
 function clamp(v: number, lo: number, hi: number) { return Math.max(lo, Math.min(hi, v)); }
 
 export default function Layout() {
+  const [authReady, setAuthReady] = useState(false);
+  const [user, setUser] = useState<UserInfo | null>(null);
+
+  useEffect(() => {
+    getStoredToken().then((token) => {
+      if (token) setApiToken(token);
+      setAuthReady(true);
+    });
+  }, []);
+
+  async function handleSignIn(token: string, userInfo: UserInfo) {
+    await storeToken(token);
+    setApiToken(token);
+    setUser(userInfo);
+  }
+
+  async function handleSignOut() {
+    await clearToken();
+    setApiToken(null);
+    setUser(null);
+  }
+
   const [open, setOpen] = useState(false);
   const [panelW, setPanelW] = useState(INIT_W);
   const [panelH, setPanelH] = useState(INIT_H);
@@ -43,18 +68,16 @@ export default function Layout() {
     setPanelY(INIT_Y);
   }
 
+  function togglePanel() { open ? closePanel() : setOpen(true); }
+
   function startMove(e: MouseEvent) {
     e.preventDefault();
-    const mx0 = e.clientX, my0 = e.clientY, x0 = panelX, y0 = panelY;
-    const w = panelW, h = panelH;
+    const mx0 = e.clientX, my0 = e.clientY, x0 = panelX, y0 = panelY, w = panelW, h = panelH;
     const onMove = (ev: MouseEvent) => {
       setPanelX(clamp(x0 + ev.clientX - mx0, 0, SW - w));
       setPanelY(clamp(y0 + ev.clientY - my0, 0, SH - h));
     };
-    const onUp = () => {
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
-    };
+    const onUp = () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
   }
@@ -64,25 +87,31 @@ export default function Layout() {
     e.stopPropagation();
     const mx0 = e.clientX, my0 = e.clientY, w0 = panelW, h0 = panelH, x0 = panelX, y0 = panelY;
     const onMove = (ev: MouseEvent) => {
-      // drag top-left handle: left/up grows, right/down shrinks
       const newW = clamp(w0 - (ev.clientX - mx0), MIN_W, SW - 16);
       const newH = clamp(h0 - (ev.clientY - my0), MIN_H, SH - 80);
       setPanelW(newW);
       setPanelH(newH);
-      setPanelX(x0 + w0 - newW);   // keep right edge fixed
-      setPanelY(y0 + h0 - newH);   // keep bottom edge fixed
+      setPanelX(x0 + w0 - newW);
+      setPanelY(y0 + h0 - newH);
     };
-    const onUp = () => {
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
-    };
+    const onUp = () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
   }
 
+  if (!authReady) return <View style={{ flex: 1, backgroundColor: '#fff' }} />;
+  if (!user) return <LoginScreen onSignIn={handleSignIn} />;
+
   return (
     <View style={{ flex: 1 }}>
-      <Tabs screenOptions={{ tabBarActiveTintColor: '#6366f1' }}>
+      <Tabs screenOptions={{
+        tabBarActiveTintColor: '#6366f1',
+        headerRight: () => (
+          <TouchableOpacity onPress={handleSignOut} style={{ marginRight: 16 }} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+            <Ionicons name="log-out-outline" size={22} color="#6366f1" />
+          </TouchableOpacity>
+        ),
+      }}>
         <Tabs.Screen name="index"    options={{ title: 'Dashboard',    tabBarIcon: tabIcon('home-outline') }} />
         <Tabs.Screen name="log"      options={{ title: 'Log Activity', tabBarIcon: tabIcon('add-circle-outline') }} />
         <Tabs.Screen name="insights" options={{ title: 'Insights',     tabBarIcon: tabIcon('analytics-outline') }} />
@@ -91,25 +120,26 @@ export default function Layout() {
         <Tabs.Screen name="export"   options={{ title: 'Export',       tabBarIcon: tabIcon('download-outline') }} />
       </Tabs>
 
-      {onDashboard && !open && (
-        <TouchableOpacity style={[styles.fab, { bottom: FAB_BOTTOM }]} onPress={() => setOpen(true)}>
-          <Ionicons name="journal-outline" size={19} color="#fff" />
-        </TouchableOpacity>
-      )}
+      {Platform.OS === 'web' ? (
+        /* ── Web: absolute-positioned layers so FAB stays on top ── */
+        onDashboard && (
+          <>
+            {/* Darkened backdrop */}
+            {open && (
+              <TouchableOpacity
+                style={[StyleSheet.absoluteFill, styles.webBackdrop]}
+                activeOpacity={1}
+                onPress={closePanel}
+              />
+            )}
 
-      {onDashboard && (
-        <Modal visible={open} transparent animationType="slide" onRequestClose={closePanel}>
-          {Platform.OS === 'web' ? (
-            /* Web: freely positionable + resizable panel */
-            <View style={StyleSheet.absoluteFill}>
-              <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={closePanel} />
+            {/* Draggable + resizable panel */}
+            {open && (
               <View style={[styles.panel, styles.panelWeb, { width: panelW, height: panelH, left: panelX, top: panelY }]}>
-                {/* Resize handle — top-left corner */}
                 {/* @ts-ignore */}
                 <View style={styles.resizeHandle} onMouseDown={startResize}>
                   <View style={styles.resizePip} />
                 </View>
-                {/* Drag-to-move handle strip */}
                 <View style={styles.panelHandle} />
                 {/* @ts-ignore */}
                 <View style={[styles.panelHeader, { cursor: 'grab' as any }]} onMouseDown={startMove}>
@@ -121,25 +151,43 @@ export default function Layout() {
                 </View>
                 <NotesScreen />
               </View>
-            </View>
-          ) : (
-            /* Mobile: centered modal */
-            <View style={styles.overlayMobile}>
-              <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={closePanel} />
-              <View style={[styles.panel, styles.panelMobile]}>
-                <View style={styles.panelHandle} />
-                <View style={styles.panelHeader}>
-                  <Ionicons name="journal-outline" size={15} color="#6366f1" />
-                  <Text style={styles.panelTitle}>Journal</Text>
-                  <TouchableOpacity onPress={closePanel} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                    <Ionicons name="close" size={18} color="#9ca3af" />
-                  </TouchableOpacity>
+            )}
+
+            {/* FAB — hidden while journal is open */}
+            {!open && (
+              <TouchableOpacity style={[styles.fab, styles.fabWeb, { bottom: FAB_BOTTOM }]} onPress={togglePanel}>
+                <Ionicons name="journal-outline" size={19} color="#fff" />
+              </TouchableOpacity>
+            )}
+          </>
+        )
+      ) : (
+        /* ── Mobile: standard centered modal ── */
+        onDashboard && (
+          <>
+            {!open && (
+              <TouchableOpacity style={[styles.fab, { bottom: FAB_BOTTOM }]} onPress={() => setOpen(true)}>
+                <Ionicons name="journal-outline" size={19} color="#fff" />
+              </TouchableOpacity>
+            )}
+            <Modal visible={open} transparent animationType="slide" onRequestClose={closePanel}>
+              <View style={styles.overlayMobile}>
+                <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={closePanel} />
+                <View style={[styles.panel, styles.panelMobile]}>
+                  <View style={styles.panelHandle} />
+                  <View style={styles.panelHeader}>
+                    <Ionicons name="journal-outline" size={15} color="#6366f1" />
+                    <Text style={styles.panelTitle}>Journal</Text>
+                    <TouchableOpacity onPress={closePanel} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                      <Ionicons name="close" size={18} color="#9ca3af" />
+                    </TouchableOpacity>
+                  </View>
+                  <NotesScreen />
                 </View>
-                <NotesScreen />
               </View>
-            </View>
-          )}
-        </Modal>
+            </Modal>
+          </>
+        )
       )}
     </View>
   );
@@ -161,6 +209,13 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 6,
   },
+  fabWeb: {
+    zIndex: 300,
+  },
+  webBackdrop: {
+    zIndex: 100,
+    backgroundColor: 'rgba(0,0,0,0.30)',
+  },
   overlayMobile: {
     flex: 1,
     justifyContent: 'center',
@@ -181,6 +236,7 @@ const styles = StyleSheet.create({
   panelWeb: {
     position: 'absolute',
     borderRadius: 16,
+    zIndex: 200,
   },
   panelMobile: {
     width: Math.min(500, SW - 32),

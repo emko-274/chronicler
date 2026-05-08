@@ -6,7 +6,8 @@ from datetime import datetime, timezone
 import uuid
 
 from database import get_db
-from models import Note, ActivityLog
+from models import Note, ActivityLog, User
+from auth import get_current_user
 
 router = APIRouter()
 
@@ -36,12 +37,14 @@ def _serialize_log(log: ActivityLog) -> dict:
     }
 
 
-def _serialize(note: Note, db: Session) -> dict:
+def _serialize(note: Note, db: Session, user_id=None) -> dict:
     linked_logs = []
     if note.linked_log_ids:
         ids = [uuid.UUID(lid) for lid in note.linked_log_ids if lid]
-        logs = db.query(ActivityLog).filter(ActivityLog.id.in_(ids)).all()
-        linked_logs = [_serialize_log(l) for l in logs]
+        q = db.query(ActivityLog).filter(ActivityLog.id.in_(ids))
+        if user_id:
+            q = q.filter(ActivityLog.user_id == user_id)
+        linked_logs = [_serialize_log(l) for l in q.all()]
     return {
         "id": str(note.id),
         "note_type": note.note_type,
@@ -60,23 +63,30 @@ def list_notes(
     note_type: Optional[str] = None,
     date: Optional[str] = None,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
-    q = db.query(Note)
+    q = db.query(Note).filter(Note.user_id == current_user.id)
     if note_type:
         q = q.filter(Note.note_type == note_type)
     if date:
         q = q.filter(Note.date == date)
-    return [_serialize(n, db) for n in q.order_by(Note.updated_at.desc()).all()]
+    return [_serialize(n, db, current_user.id) for n in q.order_by(Note.updated_at.desc()).all()]
 
 
 @router.get("/daily/{date}/logs")
-def get_daily_logs(date: str, db: Session = Depends(get_db)):
-    """Return all activity logs that started on the given date (YYYY-MM-DD) and have notes."""
-    from sqlalchemy import func, cast
+def get_daily_logs(
+    date: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    from sqlalchemy import cast
     from sqlalchemy.dialects.postgresql import DATE
     logs = (
         db.query(ActivityLog)
-        .filter(cast(ActivityLog.started_at, DATE) == date)
+        .filter(
+            ActivityLog.user_id == current_user.id,
+            cast(ActivityLog.started_at, DATE) == date,
+        )
         .order_by(ActivityLog.started_at)
         .all()
     )
@@ -84,8 +94,13 @@ def get_daily_logs(date: str, db: Session = Depends(get_db)):
 
 
 @router.post("/")
-def create_note(body: NoteCreate, db: Session = Depends(get_db)):
+def create_note(
+    body: NoteCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     note = Note(
+        user_id=current_user.id,
         note_type=body.note_type,
         date=body.date,
         title=body.title,
@@ -95,12 +110,20 @@ def create_note(body: NoteCreate, db: Session = Depends(get_db)):
     db.add(note)
     db.commit()
     db.refresh(note)
-    return _serialize(note, db)
+    return _serialize(note, db, current_user.id)
 
 
 @router.put("/{note_id}")
-def update_note(note_id: str, body: NoteUpdate, db: Session = Depends(get_db)):
-    note = db.query(Note).filter(Note.id == uuid.UUID(note_id)).first()
+def update_note(
+    note_id: str,
+    body: NoteUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    note = db.query(Note).filter(
+        Note.id == uuid.UUID(note_id),
+        Note.user_id == current_user.id,
+    ).first()
     if not note:
         raise HTTPException(status_code=404, detail="Note not found")
     if body.title is not None:
@@ -112,12 +135,19 @@ def update_note(note_id: str, body: NoteUpdate, db: Session = Depends(get_db)):
     note.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(note)
-    return _serialize(note, db)
+    return _serialize(note, db, current_user.id)
 
 
 @router.delete("/{note_id}")
-def delete_note(note_id: str, db: Session = Depends(get_db)):
-    note = db.query(Note).filter(Note.id == uuid.UUID(note_id)).first()
+def delete_note(
+    note_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    note = db.query(Note).filter(
+        Note.id == uuid.UUID(note_id),
+        Note.user_id == current_user.id,
+    ).first()
     if not note:
         raise HTTPException(status_code=404, detail="Note not found")
     db.delete(note)

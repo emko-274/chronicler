@@ -1,34 +1,47 @@
-from sqlalchemy import Column, String, DateTime, Integer, Text, JSON
+from sqlalchemy import Column, String, DateTime, Integer, Text, JSON, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID
 from database import Base
 import uuid
 from datetime import datetime, timezone
 
 
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    google_sub = Column(String(255), unique=True, nullable=False)
+    email = Column(String(255), nullable=False)
+    name = Column(String(255), nullable=False)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+
 class HiddenCategory(Base):
     __tablename__ = "hidden_categories"
 
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), primary_key=True)
     name = Column(String(100), primary_key=True)
 
 
 class CategoryConfig(Base):
     __tablename__ = "category_configs"
 
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), primary_key=True)
     name = Column(String(100), primary_key=True)
-    data_type = Column(String(20), nullable=False, default='duration')  # 'duration' | 'instance' | 'quantity'
-    unit = Column(String(50), nullable=True)  # unit label for quantity type (e.g. "cups", "km")
+    data_type = Column(String(20), nullable=False, default='duration')
+    unit = Column(String(50), nullable=True)
 
 
 class ActivityLog(Base):
     __tablename__ = "activity_logs"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    activity_type = Column(String(100), nullable=False)  # e.g. "sleep", "exercise", "work"
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True)
+    activity_type = Column(String(100), nullable=False)
     started_at = Column(DateTime, nullable=False)
     ended_at = Column(DateTime, nullable=True)
     duration_minutes = Column(Integer, nullable=True)
     notes = Column(Text, nullable=True)
-    extra_data = Column(JSON, nullable=True)  # flexible field for extra data
+    extra_data = Column(JSON, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
@@ -36,8 +49,9 @@ class Note(Base):
     __tablename__ = "notes"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    note_type = Column(String(20), nullable=False)  # "general" or "daily"
-    date = Column(String(10), nullable=True)         # YYYY-MM-DD, only for daily notes
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True)
+    note_type = Column(String(20), nullable=False)
+    date = Column(String(10), nullable=True)
     title = Column(String(200), nullable=True)
     content = Column(Text, nullable=False, default="")
     linked_log_ids = Column(JSON, nullable=False, default=list)
