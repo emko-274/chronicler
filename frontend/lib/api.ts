@@ -1,10 +1,19 @@
 import axios from 'axios';
 
-// In development, points to your local backend.
-// When you deploy, set EXPO_PUBLIC_API_URL to your hosted backend URL.
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:8000';
 
 const api = axios.create({ baseURL: API_BASE_URL });
+
+let _token: string | null = null;
+
+export function setApiToken(token: string | null) {
+  _token = token;
+}
+
+api.interceptors.request.use((config) => {
+  if (_token) config.headers.Authorization = `Bearer ${_token}`;
+  return config;
+});
 
 export interface ActivityLog {
   id: string;

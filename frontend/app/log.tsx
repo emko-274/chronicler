@@ -54,7 +54,7 @@ function toLocalDateValue(date: Date): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
-type PickerState = { target: 'start' | 'end' | 'zero'; mode: 'date' | 'time' } | null;
+type PickerState = { target: 'start' | 'end' | 'entry_date'; mode: 'date' | 'time' } | null;
 
 // Defined at module level so React reuses the same DOM node across re-renders.
 // If defined inside LogScreen, every render creates a new component reference,
@@ -271,9 +271,8 @@ export default function LogScreen() {
   const [showDropdown, setShowDropdown] = useState(false);
   const [knownTypes, setKnownTypes] = useState<string[]>(BUILTIN_TYPES);
 
-  const [isDurationZero, setIsDurationZero] = useState(false);
-  const [zeroDate, setZeroDate] = useState(new Date());
-
+  const [hasStart, setHasStart] = useState(false);
+  const [entryDate, setEntryDate] = useState(new Date()); // used when !hasStart
   const [startDate, setStartDate] = useState(new Date());
   const [endDate, setEndDate] = useState<Date | null>(null);
   const [hasEnd, setHasEnd] = useState(false);
@@ -324,11 +323,11 @@ export default function LogScreen() {
         const warnings: string[] = [];
 
         const timedCount = existing.filter(l => l.duration_minutes != null && l.duration_minutes > 0).length;
-        const untimedCount = existing.filter(l => l.extra_data?.untimed === true).length;
-        if (isDurationZero && timedCount > 0 && timedCount >= untimedCount) {
-          warnings.push(`Most "${activityType}" entries have a duration — consider Timed`);
-        } else if (!isDurationZero && untimedCount > timedCount && timedCount === 0) {
-          warnings.push(`Previous "${activityType}" entries are untimed`);
+        const timelessCount = existing.filter(l => l.extra_data?.untimed === true || l.extra_data?.zero === true).length;
+        if (!hasStart && timedCount > 0 && timedCount >= timelessCount) {
+          warnings.push(`Most "${activityType}" entries have a start time — consider adding one`);
+        } else if (hasStart && timelessCount > timedCount && timedCount === 0) {
+          warnings.push(`Previous "${activityType}" entries don't have timestamps`);
         }
 
         const withQty = existing.filter(l => typeof l.extra_data?.quantity === 'number');
@@ -359,15 +358,15 @@ export default function LogScreen() {
       }
     }, 400);
     return () => clearTimeout(timer);
-  }, [activityType, isDurationZero, showQuantity, quantityText, quantityUnit]);
+  }, [activityType, hasStart, showQuantity, quantityText, quantityUnit]);
 
   // ── Time validation ────────────────────────────────────────────────────────
 
   useEffect(() => {
     const now = new Date();
     const warnings: string[] = [];
-    if (isDurationZero) {
-      if (zeroDate > now) warnings.push('Date cannot be in the future.');
+    if (!hasStart) {
+      if (entryDate > now) warnings.push('Date cannot be in the future.');
     } else {
       if (startDate > now) warnings.push('Start time cannot be in the future.');
       if (hasEnd && endDate) {
@@ -376,7 +375,7 @@ export default function LogScreen() {
       }
     }
     setTimeWarnings(warnings);
-  }, [isDurationZero, zeroDate, startDate, endDate, hasEnd]);
+  }, [hasStart, entryDate, startDate, endDate, hasEnd]);
 
   // ── Category search logic ───────────────────────────────────────────────────
 
@@ -406,19 +405,13 @@ export default function LogScreen() {
 
   // ── Native picker handlers ──────────────────────────────────────────────────
 
-  const openPicker = (target: 'start' | 'end') => {
-    if (target === 'end' && !hasEnd) setEndDate(startDate);
-    setPicker({ target, mode: 'date' });
-  };
-
   const onPickerChange = (event: DateTimePickerEvent, selected?: Date) => {
     if (!picker || !selected) { setPicker(null); return; }
     if (event.type === 'dismissed') { setPicker(null); return; }
-    if (picker.target === 'zero') {
-      // Keep the time at noon to avoid timezone edge cases
+    if (picker.target === 'entry_date') {
       const d = new Date(selected);
       d.setHours(12, 0, 0, 0);
-      setZeroDate(d);
+      setEntryDate(d);
       setPicker(null);
       return;
     }
@@ -441,33 +434,27 @@ export default function LogScreen() {
 
     const now = new Date();
 
-    if (isDurationZero) {
-      if (zeroDate > now) return;
-      // 0-min path: no overlap check, use zeroDate at noon for both start and end
+    if (!hasStart) {
+      const d = new Date(entryDate);
+      d.setHours(12, 0, 0, 0);
+      if (d > now) return Alert.alert('Invalid date', 'Date cannot be in the future.');
       setSaving(true);
       try {
         await createLog({
           activity_type: activityType,
-          started_at: zeroDate.toISOString(),
+          started_at: d.toISOString(),
           notes: notes.trim() || undefined,
           extra_data: {
-            untimed: true,
+            zero: true,
             ...(quantityText.trim() ? { quantity: parseFloat(quantityText), unit: quantityUnit.trim() } : {}),
           },
         });
         Alert.alert('Saved!', 'Your activity has been logged.');
-        setActivityType('');
-        setIsDurationZero(false);
-        setZeroDate(new Date());
-        setNotes('');
-        setShowQuantity(false);
-        setQuantityText('');
-        setQuantityUnit('');
+        setActivityType(''); setEntryDate(new Date());
+        setNotes(''); setShowQuantity(false); setQuantityText(''); setQuantityUnit('');
       } catch {
         Alert.alert('Error', 'Could not save. Is the backend running?');
-      } finally {
-        setSaving(false);
-      }
+      } finally { setSaving(false); }
       return;
     }
 
@@ -504,13 +491,8 @@ export default function LogScreen() {
       });
       Alert.alert('Saved!', 'Your activity has been logged.');
       setActivityType('');
-      setStartDate(new Date());
-      setEndDate(null);
-      setHasEnd(false);
-      setNotes('');
-      setShowQuantity(false);
-      setQuantityText('');
-      setQuantityUnit('');
+      setStartDate(new Date()); setEndDate(null); setHasEnd(false);
+      setNotes(''); setShowQuantity(false); setQuantityText(''); setQuantityUnit('');
     } catch {
       Alert.alert('Error', 'Could not save. Is the backend running?');
     } finally {
@@ -582,24 +564,6 @@ export default function LogScreen() {
         </>
       )}
 
-      {/* ── Timed / Untimed segmented control ── */}
-      {activityType ? (
-        <View style={styles.segmentedRow}>
-          <TouchableOpacity
-            style={[styles.segBtn, !isDurationZero && styles.segBtnOn]}
-            onPress={() => setIsDurationZero(false)}
-          >
-            <Text style={[styles.segBtnText, !isDurationZero && styles.segBtnTextOn]}>Timed</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.segBtn, isDurationZero && styles.segBtnOn]}
-            onPress={() => setIsDurationZero(true)}
-          >
-            <Text style={[styles.segBtnText, isDurationZero && styles.segBtnTextOn]}>Untimed</Text>
-          </TouchableOpacity>
-        </View>
-      ) : null}
-
       {typeWarnings.length > 0 && activityType ? (
         <View style={styles.warningBox}>
           <View style={styles.warningHeader}>
@@ -612,31 +576,49 @@ export default function LogScreen() {
         </View>
       ) : null}
 
-      {isDurationZero ? (
-        /* ── 0-min path: date only ── */
+      {/* ── Date / Start Time ── */}
+      {!hasStart ? (
         <>
           <Text style={styles.label}>Date</Text>
           {Platform.OS === 'web' ? (
-            <WebDateOnlyInput value={zeroDate} onChange={setZeroDate} />
+            <WebDateOnlyInput value={entryDate} onChange={setEntryDate} />
           ) : (
-            <TouchableOpacity style={styles.dateBtn} onPress={() => setPicker({ target: 'zero', mode: 'date' })}>
+            <TouchableOpacity style={styles.dateBtn} onPress={() => setPicker({ target: 'entry_date', mode: 'date' })}>
               <Text style={styles.dateBtnText}>
-                {zeroDate.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}
+                {entryDate.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}
               </Text>
             </TouchableOpacity>
           )}
+          <View style={styles.endRow}>
+            <Text style={styles.label}>Start Time</Text>
+            <TouchableOpacity onPress={() => setHasStart(true)} style={styles.toggle}>
+              <Text style={styles.toggleText}>+ Add</Text>
+            </TouchableOpacity>
+          </View>
         </>
       ) : (
-        /* ── Timed path ── */
         <>
-          <Text style={styles.label}>Start Time</Text>
-          {Platform.OS === 'web' ? (
-            <WebDateInput value={startDate} onChange={setStartDate} />
-          ) : (
-            <TouchableOpacity style={styles.dateBtn} onPress={() => openPicker('start')}>
-              <Text style={styles.dateBtnText}>{formatDateTime(startDate)}</Text>
+          <View style={styles.endRow}>
+            <Text style={styles.label}>Start Time</Text>
+          </View>
+          <View style={styles.endInputRow}>
+            {Platform.OS === 'web' ? (
+              <View style={{ flex: 1 }}>
+                <WebDateInput value={startDate} onChange={setStartDate} />
+              </View>
+            ) : (
+              <TouchableOpacity style={[styles.dateBtn, { flex: 1 }]} onPress={() => setPicker({ target: 'start', mode: 'date' })}>
+                <Text style={styles.dateBtnText}>{formatDateTime(startDate)}</Text>
+              </TouchableOpacity>
+            )}
+            <TouchableOpacity
+              onPress={() => { setHasStart(false); setHasEnd(false); setEndDate(null); }}
+              style={styles.endRemoveBtn}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Ionicons name="close-circle" size={20} color="#9ca3af" />
             </TouchableOpacity>
-          )}
+          </View>
 
           <View style={styles.endRow}>
             <Text style={styles.label}>End Time</Text>
@@ -649,9 +631,11 @@ export default function LogScreen() {
           {hasEnd && (
             <View style={styles.endInputRow}>
               {Platform.OS === 'web' ? (
-                <WebDateInput value={endDate ?? new Date()} onChange={setEndDate} />
+                <View style={{ flex: 1 }}>
+                  <WebDateInput value={endDate ?? new Date()} onChange={setEndDate} />
+                </View>
               ) : (
-                <TouchableOpacity style={[styles.dateBtn, { flex: 1 }]} onPress={() => openPicker('end')}>
+                <TouchableOpacity style={[styles.dateBtn, { flex: 1 }]} onPress={() => setPicker({ target: 'end', mode: 'date' })}>
                   <Text style={styles.dateBtnText}>
                     {endDate ? formatDateTime(endDate) : 'Tap to set'}
                   </Text>
@@ -727,8 +711,8 @@ export default function LogScreen() {
 
       {picker && Platform.OS !== 'web' && (
         <DateTimePicker
-          value={picker.target === 'zero' ? zeroDate : picker.target === 'start' ? startDate : (endDate ?? new Date())}
-          mode={picker.mode}
+          value={picker.target === 'entry_date' ? entryDate : picker.target === 'start' ? startDate : (endDate ?? new Date())}
+          mode={picker.target === 'entry_date' ? 'date' : picker.mode}
           maximumDate={new Date()}
           display={Platform.OS === 'ios' ? 'inline' : 'default'}
           onChange={onPickerChange}

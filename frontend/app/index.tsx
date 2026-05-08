@@ -263,8 +263,8 @@ function EditLogModal({
   onSave: () => void;
 }) {
   const [activityType, setActivityType] = useState('');
-  const [isUntimed, setIsUntimed] = useState(false);
-  const [untimedDate, setUntimedDate] = useState(new Date());
+  const [hasStart, setHasStart] = useState(true);
+  const [entryDate, setEntryDate] = useState(new Date()); // date only, used when !hasStart
   const [startDate, setStartDate] = useState(new Date());
   const [endDate, setEndDate] = useState<Date | null>(null);
   const [notes, setNotes] = useState('');
@@ -277,11 +277,11 @@ function EditLogModal({
   useEffect(() => {
     if (!log) return;
     setActivityType(log.activity_type);
-    const untimed = log.extra_data?.untimed === true;
-    setIsUntimed(untimed);
+    const timeless = log.extra_data?.untimed === true || log.extra_data?.zero === true;
+    setHasStart(!timeless);
     const started = new Date(log.started_at);
-    if (untimed) {
-      setUntimedDate(started);
+    if (timeless) {
+      setEntryDate(started);
     } else {
       setStartDate(started);
       setEndDate(log.ended_at ? new Date(log.ended_at) : null);
@@ -305,7 +305,7 @@ function EditLogModal({
     if (picker.target === 'date_only') {
       const d = new Date(selected);
       d.setHours(12, 0, 0, 0);
-      setUntimedDate(d);
+      setEntryDate(d);
       setPicker(null);
       return;
     }
@@ -320,7 +320,7 @@ function EditLogModal({
 
   const handleSave = async () => {
     if (!log) return;
-    if (!isUntimed && endDate && endDate <= startDate) {
+    if (hasStart && endDate && endDate <= startDate) {
       Alert.alert('Invalid time', 'End time must be after start time.');
       return;
     }
@@ -329,13 +329,15 @@ function EditLogModal({
       : null;
     setSaving(true);
     try {
-      if (isUntimed) {
+      if (!hasStart) {
+        const d = new Date(entryDate);
+        d.setHours(12, 0, 0, 0);
         await updateLog(log.id, {
           activity_type: activityType,
-          started_at: untimedDate.toISOString(),
+          started_at: d.toISOString(),
           ended_at: null,
           notes: notes.trim() || null,
-          extra_data: { untimed: true, ...(quantityExtra ?? {}) },
+          extra_data: { zero: true, ...(quantityExtra ?? {}) },
         });
       } else {
         await updateLog(log.id, {
@@ -379,50 +381,54 @@ function EditLogModal({
               autoCorrect={false}
             />
 
-            <View style={editStyles.segmentedRow}>
-              <TouchableOpacity
-                style={[editStyles.segBtn, !isUntimed && editStyles.segBtnOn]}
-                onPress={() => setIsUntimed(false)}
-              >
-                <Text style={[editStyles.segBtnText, !isUntimed && editStyles.segBtnTextOn]}>Timed</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[editStyles.segBtn, isUntimed && editStyles.segBtnOn]}
-                onPress={() => setIsUntimed(true)}
-              >
-                <Text style={[editStyles.segBtnText, isUntimed && editStyles.segBtnTextOn]}>Untimed</Text>
-              </TouchableOpacity>
-            </View>
-
-            {isUntimed ? (
+            {!hasStart ? (
               <>
                 <Text style={editStyles.label}>Date</Text>
                 {Platform.OS === 'web' ? (
-                  <EditDateOnlyInput value={untimedDate} onChange={setUntimedDate} />
+                  <EditDateOnlyInput value={entryDate} onChange={setEntryDate} />
                 ) : (
                   <TouchableOpacity
                     style={editStyles.dateBtn}
                     onPress={() => setPicker({ target: 'date_only', mode: 'date' })}
                   >
                     <Text style={editStyles.dateBtnText}>
-                      {untimedDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
+                      {entryDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
                     </Text>
                   </TouchableOpacity>
                 )}
+                <View style={editStyles.endRow}>
+                  <Text style={editStyles.label}>Start Time</Text>
+                  <TouchableOpacity onPress={() => setHasStart(true)}>
+                    <Text style={editStyles.addEndText}>+ Add</Text>
+                  </TouchableOpacity>
+                </View>
               </>
             ) : (
               <>
-                <Text style={editStyles.label}>Start Time</Text>
-                {Platform.OS === 'web' ? (
-                  <EditDateInput value={startDate} onChange={setStartDate} />
-                ) : (
+                <View style={editStyles.endRow}>
+                  <Text style={editStyles.label}>Start Time</Text>
+                </View>
+                <View style={[editStyles.endRow, { alignItems: 'stretch' }]}>
+                  {Platform.OS === 'web' ? (
+                    <View style={{ flex: 1 }}>
+                      <EditDateInput value={startDate} onChange={setStartDate} />
+                    </View>
+                  ) : (
+                    <TouchableOpacity
+                      style={[editStyles.dateBtn, { flex: 1 }]}
+                      onPress={() => setPicker({ target: 'start', mode: 'date' })}
+                    >
+                      <Text style={editStyles.dateBtnText}>{formatDateTime(startDate)}</Text>
+                    </TouchableOpacity>
+                  )}
                   <TouchableOpacity
-                    style={editStyles.dateBtn}
-                    onPress={() => setPicker({ target: 'start', mode: 'date' })}
+                    onPress={() => { setHasStart(false); setEndDate(null); }}
+                    style={editStyles.removeEndBtn}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                   >
-                    <Text style={editStyles.dateBtnText}>{formatDateTime(startDate)}</Text>
+                    <Ionicons name="close-circle" size={20} color="#9ca3af" />
                   </TouchableOpacity>
-                )}
+                </View>
 
                 <Text style={editStyles.label}>End Time</Text>
                 {endDate !== null ? (
@@ -504,7 +510,7 @@ function EditLogModal({
           {picker && Platform.OS !== 'web' && (
             <DateTimePicker
               value={
-                picker.target === 'date_only' ? untimedDate
+                picker.target === 'date_only' ? entryDate
                   : picker.target === 'start' ? startDate
                   : (endDate ?? new Date())
               }
@@ -965,15 +971,17 @@ function TimelineChart({
                         );
                       } else {
                         const isUntimed = log.extra_data?.untimed === true;
+                        const isZero = log.extra_data?.zero === true;
+                        const isTimeless = isUntimed || isZero;
                         const r = Math.min(3, (FLIPPED_ROW_H - BAR_PADDING * 2) / 2);
                         return (
                           <Circle key={log.id}
-                            cx={isUntimed ? flippedW / 2 : barX}
+                            cx={isTimeless ? flippedW / 2 : barX}
                             cy={FLIPPED_ROW_H / 2}
                             r={r}
-                            fill={isUntimed ? 'none' : color}
-                            stroke={isUntimed ? color : 'none'}
-                            strokeWidth={isUntimed ? 1.5 : 0}
+                            fill={isTimeless ? 'none' : color}
+                            stroke={isTimeless ? color : 'none'}
+                            strokeWidth={isTimeless ? 1.5 : 0}
                             opacity={isUntimed ? 0.4 : 0.85}
                             // @ts-ignore
                             {...interactionProps}
@@ -1135,16 +1143,18 @@ function TimelineChart({
                         );
                       } else {
                         const isUntimed = log.extra_data?.untimed === true;
+                        const isZero = log.extra_data?.zero === true;
+                        const isTimeless = isUntimed || isZero;
                         const r = Math.max(3, Math.min(5, barW / 2));
                         return (
                           <G key={log.id}>
                             <Circle
                               cx={barX + barW / 2}
-                              cy={isUntimed ? CHART_H / 2 : barY}
+                              cy={isTimeless ? CHART_H / 2 : barY}
                               r={r}
-                              fill={isUntimed ? 'none' : color}
-                              stroke={isUntimed ? color : 'none'}
-                              strokeWidth={isUntimed ? 1.5 : 0}
+                              fill={isTimeless ? 'none' : color}
+                              stroke={isTimeless ? color : 'none'}
+                              strokeWidth={isTimeless ? 1.5 : 0}
                               opacity={isUntimed ? 0.4 : 0.85}
                               // @ts-ignore
                               {...interactionProps}
@@ -1346,7 +1356,7 @@ function ActivityChart({
   const byDate = new Map<string, number>();
   if (useCountMode) {
     logs
-      .filter(l => l.activity_type === type)
+      .filter(l => l.activity_type === type && l.extra_data?.zero !== true && l.extra_data?.untimed !== true)
       .forEach(l => {
         const key = dayKey(new Date(l.started_at));
         byDate.set(key, (byDate.get(key) ?? 0) + 1);
@@ -1357,6 +1367,8 @@ function ActivityChart({
         if (l.activity_type !== type) return false;
         if (hasDuration) return l.duration_minutes != null && l.duration_minutes > 0;
         if (hasQuantity) return typeof l.extra_data?.quantity === 'number';
+        // pure occurrence count — exclude zero/untimed entries
+        if (l.extra_data?.zero === true || l.extra_data?.untimed === true) return false;
         return true;
       })
       .forEach((l) => {
@@ -1394,6 +1406,7 @@ function ActivityChart({
     logs
       .filter((l) => {
         if (l.activity_type !== type) return false;
+        if (l.extra_data?.zero === true || l.extra_data?.untimed === true) return false;
         if (hasDuration) return l.duration_minutes == null || l.duration_minutes === 0;
         if (hasQuantity) return typeof l.extra_data?.quantity !== 'number';
         return false;
@@ -1792,7 +1805,11 @@ function LogItem({
       <View style={styles.logRowMain}>
         <View style={styles.logRowLeft}>
           <Text style={styles.activityType}>{log.activity_type}</Text>
-          <Text style={styles.date}>{formatTimeRange(log.started_at, log.ended_at)}</Text>
+          <Text style={styles.date}>
+            {(log.extra_data?.zero === true || log.extra_data?.untimed === true)
+              ? new Date(log.started_at).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
+              : formatTimeRange(log.started_at, log.ended_at)}
+          </Text>
           {log.notes ? (
             <Text style={styles.notes} numberOfLines={1}>{log.notes}</Text>
           ) : null}
@@ -1802,7 +1819,7 @@ function LogItem({
             <Text style={styles.duration}>
               {`${Number(log.extra_data.quantity) % 1 === 0 ? Number(log.extra_data.quantity).toFixed(0) : Number(log.extra_data.quantity).toFixed(1)}${log.extra_data.unit ? ` ${log.extra_data.unit}` : ''}`}
             </Text>
-          ) : (
+          ) : (log.extra_data?.zero === true || log.extra_data?.untimed === true) ? null : (
             <Text style={styles.duration}>{formatDuration(log.duration_minutes)}</Text>
           )}
           <TouchableOpacity onPress={confirmDelete} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
