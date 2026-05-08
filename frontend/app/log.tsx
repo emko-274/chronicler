@@ -284,6 +284,7 @@ export default function LogScreen() {
   const [saving, setSaving] = useState(false);
   const [picker, setPicker] = useState<PickerState>(null);
   const [typeWarnings, setTypeWarnings] = useState<string[]>([]);
+  const [timeWarnings, setTimeWarnings] = useState<string[]>([]);
 
   type ConfirmState = {
     title: string;
@@ -360,6 +361,23 @@ export default function LogScreen() {
     return () => clearTimeout(timer);
   }, [activityType, isDurationZero, showQuantity, quantityText, quantityUnit]);
 
+  // ── Time validation ────────────────────────────────────────────────────────
+
+  useEffect(() => {
+    const now = new Date();
+    const warnings: string[] = [];
+    if (isDurationZero) {
+      if (zeroDate > now) warnings.push('Date cannot be in the future.');
+    } else {
+      if (startDate > now) warnings.push('Start time cannot be in the future.');
+      if (hasEnd && endDate) {
+        if (endDate <= startDate) warnings.push('End time must be after start time.');
+        else if (endDate > now) warnings.push('End time cannot be in the future.');
+      }
+    }
+    setTimeWarnings(warnings);
+  }, [isDurationZero, zeroDate, startDate, endDate, hasEnd]);
+
   // ── Category search logic ───────────────────────────────────────────────────
 
   const normalizedQuery = typeQuery.trim().toLowerCase();
@@ -424,7 +442,7 @@ export default function LogScreen() {
     const now = new Date();
 
     if (isDurationZero) {
-      if (zeroDate > now) return Alert.alert('Invalid date', 'Date cannot be in the future.');
+      if (zeroDate > now) return;
       // 0-min path: no overlap check, use zeroDate at noon for both start and end
       setSaving(true);
       try {
@@ -454,8 +472,7 @@ export default function LogScreen() {
     }
 
     // ── Timed path: overlap check then save ────────────────────────────────
-    if (startDate > now) return Alert.alert('Invalid time', 'Start time cannot be in the future.');
-    if (hasEnd && endDate && endDate <= startDate) return Alert.alert('Invalid time', 'End time must be after start time.');
+    if (timeWarnings.length > 0) return;
 
     try {
       const existing = await getLogs(activityType, 200);
@@ -692,7 +709,19 @@ export default function LogScreen() {
         multiline
       />
 
-      <TouchableOpacity style={styles.saveBtn} onPress={handleSave} disabled={saving}>
+      {timeWarnings.length > 0 && (
+        <View style={styles.warningBox}>
+          <View style={styles.warningHeader}>
+            <Ionicons name="warning-outline" size={14} color="#92400e" />
+            <Text style={styles.warningTitle}>Invalid time</Text>
+          </View>
+          {timeWarnings.map((w, i) => (
+            <Text key={i} style={styles.warningItem}>{w}</Text>
+          ))}
+        </View>
+      )}
+
+      <TouchableOpacity style={[styles.saveBtn, timeWarnings.length > 0 && styles.saveBtnOff]} onPress={handleSave} disabled={saving || timeWarnings.length > 0}>
         {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.saveBtnText}>Save Entry</Text>}
       </TouchableOpacity>
 
@@ -789,6 +818,7 @@ const styles = StyleSheet.create({
   toggle: { marginTop: 16 },
   toggleText: { fontSize: 13, color: '#6366f1', fontWeight: '600' },
   saveBtn: { backgroundColor: '#6366f1', padding: 16, borderRadius: 10, alignItems: 'center', marginTop: 28 },
+  saveBtnOff: { backgroundColor: '#a5b4fc' },
   saveBtnText: { color: '#fff', fontSize: 16, fontWeight: '700' },
 
   // Quantity input

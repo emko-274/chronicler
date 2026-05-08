@@ -124,3 +124,49 @@ export const deleteCategoryData = (name: string): Promise<{ deleted: number }> =
 
 export const restoreCategory = (name: string): Promise<void> =>
   api.post(`/categories/${encodeURIComponent(name)}/restore`).then((r) => r.data);
+
+export interface LinkedLog {
+  id: string;
+  activity_type: string;
+  started_at: string;
+  ended_at: string | null;
+  duration_minutes: number | null;
+  notes: string | null;
+}
+
+export interface Note {
+  id: string;
+  note_type: 'general' | 'daily';
+  date: string | null;
+  title: string | null;
+  content: string;
+  linked_log_ids: string[];
+  linked_logs: LinkedLog[];
+  created_at: string;
+  updated_at: string;
+}
+
+export const getNotes = (params?: { note_type?: string; date?: string }): Promise<Note[]> =>
+  api.get('/notes', { params }).then((r) => r.data);
+
+export const getDailyLogs = (date: string): Promise<LinkedLog[]> =>
+  api.get(`/notes/daily/${date}/logs`).then((r) => r.data);
+
+export const createNote = (body: {
+  note_type: string;
+  date?: string;
+  title?: string | null;
+  content?: string;
+  linked_log_ids?: string[];
+}): Promise<Note> =>
+  api.post('/notes', body).then((r) => r.data);
+
+export const updateNote = (id: string, body: {
+  title?: string | null;
+  content?: string;
+  linked_log_ids?: string[];
+}): Promise<Note> =>
+  api.put(`/notes/${id}`, body).then((r) => r.data);
+
+export const deleteNote = (id: string): Promise<void> =>
+  api.delete(`/notes/${id}`).then((r) => r.data);

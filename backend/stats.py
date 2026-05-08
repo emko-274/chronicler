@@ -11,7 +11,6 @@ from statistics import mean, median, stdev
 from typing import Optional
 import numpy as np
 from scipy import stats as scipy_stats
-import statsmodels.api as sm
 
 
 def _filter(logs: list[dict], activity_type: str,

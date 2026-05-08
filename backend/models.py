@@ -30,3 +30,16 @@ class ActivityLog(Base):
     notes = Column(Text, nullable=True)
     extra_data = Column(JSON, nullable=True)  # flexible field for extra data
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class Note(Base):
+    __tablename__ = "notes"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    note_type = Column(String(20), nullable=False)  # "general" or "daily"
+    date = Column(String(10), nullable=True)         # YYYY-MM-DD, only for daily notes
+    title = Column(String(200), nullable=True)
+    content = Column(Text, nullable=False, default="")
+    linked_log_ids = Column(JSON, nullable=False, default=list)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
