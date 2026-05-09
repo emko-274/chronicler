@@ -271,6 +271,8 @@ function EditLogModal({
   const [showQuantity, setShowQuantity] = useState(false);
   const [quantityText, setQuantityText] = useState('');
   const [quantityUnit, setQuantityUnit] = useState('');
+  const [tags, setTags] = useState<string[]>([]);
+  const [tagInput, setTagInput] = useState('');
   const [saving, setSaving] = useState(false);
   const [picker, setPicker] = useState<PickerState>(null);
 
@@ -297,6 +299,8 @@ function EditLogModal({
       setQuantityText('');
       setQuantityUnit('');
     }
+    setTags(Array.isArray(log.extra_data?.tags) ? (log.extra_data.tags as string[]) : []);
+    setTagInput('');
   }, [log?.id]);
 
   const onPickerChange = (event: DateTimePickerEvent, selected?: Date) => {
@@ -327,6 +331,7 @@ function EditLogModal({
     const quantityExtra = showQuantity && quantityText.trim()
       ? { quantity: parseFloat(quantityText), unit: quantityUnit.trim() }
       : null;
+    const tagsExtra = tags.length > 0 ? { tags } : null;
     setSaving(true);
     try {
       if (!hasStart) {
@@ -337,7 +342,7 @@ function EditLogModal({
           started_at: d.toISOString(),
           ended_at: null,
           notes: notes.trim() || null,
-          extra_data: { zero: true, ...(quantityExtra ?? {}) },
+          extra_data: { zero: true, ...(tagsExtra ?? {}), ...(quantityExtra ?? {}) },
         });
       } else {
         await updateLog(log.id, {
@@ -345,7 +350,9 @@ function EditLogModal({
           started_at: startDate.toISOString(),
           ended_at: endDate ? endDate.toISOString() : null,
           notes: notes.trim() || null,
-          extra_data: quantityExtra,
+          extra_data: (tagsExtra || quantityExtra)
+            ? { ...(tagsExtra ?? {}), ...(quantityExtra ?? {}) }
+            : null,
         });
       }
       onSave();
@@ -499,6 +506,42 @@ function EditLogModal({
               placeholder="Optional notes..."
               placeholderTextColor="#9ca3af"
             />
+
+            <Text style={editStyles.label}>Tags</Text>
+            <View style={editStyles.tagsContainer}>
+              {tags.map(tag => (
+                <View key={tag} style={editStyles.tagChip}>
+                  <Text style={editStyles.tagChipText}>{tag}</Text>
+                  <TouchableOpacity onPress={() => setTags(t => t.filter(x => x !== tag))} hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}>
+                    <Ionicons name="close" size={11} color="#6366f1" />
+                  </TouchableOpacity>
+                </View>
+              ))}
+              <TextInput
+                style={editStyles.tagInput}
+                placeholder={tags.length === 0 ? 'Type a tag…' : 'Add another…'}
+                placeholderTextColor="#9ca3af"
+                value={tagInput}
+                onChangeText={(t) => {
+                  if (t.endsWith(',') || t.endsWith(' ')) {
+                    const tag = t.slice(0, -1).trim();
+                    if (tag && !tags.includes(tag)) setTags(prev => [...prev, tag]);
+                    setTagInput('');
+                    return;
+                  }
+                  setTagInput(t);
+                }}
+                onSubmitEditing={() => {
+                  const t = tagInput.trim();
+                  if (t && !tags.includes(t)) setTags(prev => [...prev, t]);
+                  setTagInput('');
+                }}
+                returnKeyType="done"
+                blurOnSubmit={false}
+                autoCorrect={false}
+                autoCapitalize="none"
+              />
+            </View>
           </ScrollView>
 
           <TouchableOpacity style={editStyles.saveBtn} onPress={handleSave} disabled={saving}>
@@ -1813,6 +1856,15 @@ function LogItem({
           {log.notes ? (
             <Text style={styles.notes} numberOfLines={1}>{log.notes}</Text>
           ) : null}
+          {Array.isArray(log.extra_data?.tags) && (log.extra_data.tags as string[]).length > 0 && (
+            <View style={styles.tagsRow}>
+              {(log.extra_data.tags as string[]).map(tag => (
+                <View key={tag} style={styles.tagPill}>
+                  <Text style={styles.tagPillText}>#{tag}</Text>
+                </View>
+              ))}
+            </View>
+          )}
         </View>
         <View style={styles.logRowRight}>
           {log.extra_data?.quantity != null ? (
@@ -2374,6 +2426,9 @@ const styles = StyleSheet.create({
   duration: { fontSize: 13, color: '#374151', fontWeight: '500' },
   date: { fontSize: 11, color: '#9ca3af', marginTop: 1 },
   notes: { fontSize: 12, color: '#6b7280', marginTop: 2 },
+  tagsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 4 },
+  tagPill: { backgroundColor: '#eef2ff', borderRadius: 20, paddingHorizontal: 7, paddingVertical: 2 },
+  tagPillText: { fontSize: 11, color: '#4f46e5', fontWeight: '500' },
 
   // Date range (inside panel)
   dateRangeSep: { fontSize: 11, color: '#9ca3af' },
@@ -2439,4 +2494,16 @@ const editStyles = StyleSheet.create({
     alignItems: 'center', marginTop: 20,
   },
   saveBtnText: { color: '#fff', fontSize: 16, fontWeight: '700' },
+  tagsContainer: {
+    flexDirection: 'row', flexWrap: 'wrap', gap: 6,
+    backgroundColor: '#f9fafb', borderRadius: 8, borderWidth: 1, borderColor: '#d1d5db',
+    padding: 8, minHeight: 44, alignItems: 'center',
+  },
+  tagChip: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    backgroundColor: '#eef2ff', borderRadius: 20,
+    paddingHorizontal: 10, paddingVertical: 4,
+  },
+  tagChipText: { fontSize: 13, color: '#4f46e5', fontWeight: '500' },
+  tagInput: { fontSize: 14, color: '#111827', minWidth: 80, paddingVertical: 2 },
 });

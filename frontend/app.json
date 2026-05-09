@@ -5,16 +5,31 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "scheme": "activitytracker",
+    "android": {
+      "package": "com.ekong5.activitytracker"
+    },
+    "ios": {
+      "bundleIdentifier": "com.ekong5.activitytracker"
+    },
     "web": {
       "bundler": "metro",
       "output": "static"
     },
     "plugins": [
       "expo-router",
-      "expo-asset"
+      "expo-asset",
+      "@react-native-community/datetimepicker",
+      "expo-secure-store",
+      "expo-web-browser"
     ],
     "experiments": {
       "typedRoutes": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "4e55880a-6cf8-4978-be44-ad4a49c3b4bf"
+      }
     }
   }
 }

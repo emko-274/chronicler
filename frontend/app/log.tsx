@@ -280,6 +280,9 @@ export default function LogScreen() {
   const [showQuantity, setShowQuantity] = useState(false);
   const [quantityText, setQuantityText] = useState('');
   const [quantityUnit, setQuantityUnit] = useState('');
+  const [tags, setTags] = useState<string[]>([]);
+  const [tagInput, setTagInput] = useState('');
+  const [showTags, setShowTags] = useState(false);
   const [saving, setSaving] = useState(false);
   const [picker, setPicker] = useState<PickerState>(null);
   const [typeWarnings, setTypeWarnings] = useState<string[]>([]);
@@ -386,6 +389,13 @@ export default function LogScreen() {
   const exactMatch = knownTypes.some((t) => t.toLowerCase() === normalizedQuery);
   const isNew = normalizedQuery.length > 0 && !exactMatch;
 
+  const addTag = (text: string) => {
+    const t = text.trim();
+    if (!t || tags.includes(t)) { setTagInput(''); return; }
+    setTags(prev => [...prev, t]);
+    setTagInput('');
+  };
+
   const selectType = (type: string) => {
     setActivityType(type);
     setTypeQuery('');
@@ -446,12 +456,14 @@ export default function LogScreen() {
           notes: notes.trim() || undefined,
           extra_data: {
             zero: true,
+            ...(tags.length > 0 ? { tags } : {}),
             ...(quantityText.trim() ? { quantity: parseFloat(quantityText), unit: quantityUnit.trim() } : {}),
           },
         });
         Alert.alert('Saved!', 'Your activity has been logged.');
         setActivityType(''); setEntryDate(new Date());
         setNotes(''); setShowQuantity(false); setQuantityText(''); setQuantityUnit('');
+        setTags([]); setTagInput(''); setShowTags(false);
       } catch {
         Alert.alert('Error', 'Could not save. Is the backend running?');
       } finally { setSaving(false); }
@@ -487,12 +499,15 @@ export default function LogScreen() {
         started_at: startDate.toISOString(),
         ended_at: hasEnd ? endDate?.toISOString() : undefined,
         notes: notes.trim() || undefined,
-        extra_data: quantityText.trim() ? { quantity: parseFloat(quantityText), unit: quantityUnit.trim() } : undefined,
+        extra_data: (tags.length > 0 || quantityText.trim())
+          ? { ...(tags.length > 0 ? { tags } : {}), ...(quantityText.trim() ? { quantity: parseFloat(quantityText), unit: quantityUnit.trim() } : {}) }
+          : undefined,
       });
       Alert.alert('Saved!', 'Your activity has been logged.');
       setActivityType('');
       setStartDate(new Date()); setEndDate(null); setHasEnd(false);
       setNotes(''); setShowQuantity(false); setQuantityText(''); setQuantityUnit('');
+      setTags([]); setTagInput(''); setShowTags(false);
     } catch {
       Alert.alert('Error', 'Could not save. Is the backend running?');
     } finally {
@@ -683,6 +698,43 @@ export default function LogScreen() {
         </View>
       )}
 
+      {/* ── Tags ── */}
+      <View style={styles.endRow}>
+        <Text style={styles.label}>Tags</Text>
+        {!showTags && (
+          <TouchableOpacity onPress={() => setShowTags(true)} style={styles.toggle}>
+            <Text style={styles.toggleText}>+ Add</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+      {showTags && (
+        <View style={styles.tagsContainer}>
+          {tags.map(tag => (
+            <View key={tag} style={styles.tagChip}>
+              <Text style={styles.tagChipText}>{tag}</Text>
+              <TouchableOpacity onPress={() => setTags(t => t.filter(x => x !== tag))} hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}>
+                <Ionicons name="close" size={11} color="#6366f1" />
+              </TouchableOpacity>
+            </View>
+          ))}
+          <TextInput
+            style={styles.tagInput}
+            placeholder={tags.length === 0 ? 'Type a tag…' : 'Add another…'}
+            placeholderTextColor="#9ca3af"
+            value={tagInput}
+            onChangeText={(t) => {
+              if (t.endsWith(',') || t.endsWith(' ')) { addTag(t.slice(0, -1)); return; }
+              setTagInput(t);
+            }}
+            onSubmitEditing={() => addTag(tagInput)}
+            returnKeyType="done"
+            blurOnSubmit={false}
+            autoCorrect={false}
+            autoCapitalize="none"
+          />
+        </View>
+      )}
+
       {/* ── Notes ── */}
       <Text style={styles.label}>Notes (optional)</Text>
       <TextInput
@@ -808,6 +860,20 @@ const styles = StyleSheet.create({
   // Quantity input
   quantityRow: { flexDirection: 'row', gap: 8, alignItems: 'stretch' },
   quantityInput: { flex: 1 },
+
+  // Tags
+  tagsContainer: {
+    flexDirection: 'row', flexWrap: 'wrap', gap: 6,
+    backgroundColor: '#fff', borderRadius: 8, borderWidth: 1, borderColor: '#d1d5db',
+    padding: 8, minHeight: 44, alignItems: 'center',
+  },
+  tagChip: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    backgroundColor: '#eef2ff', borderRadius: 20,
+    paddingHorizontal: 10, paddingVertical: 4,
+  },
+  tagChipText: { fontSize: 13, color: '#4f46e5', fontWeight: '500' },
+  tagInput: { fontSize: 14, color: '#111827', minWidth: 80, paddingVertical: 2 },
 
   // Timed / 0 min segmented control
   segmentedRow: {
