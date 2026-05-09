@@ -1398,7 +1398,7 @@ function ActivityChart({
     scrollRef.current?.scrollToEnd({ animated: false });
   }, []);
 
-  const hasDuration = logs.some((l) => l.activity_type === type && l.duration_minutes != null && l.duration_minutes > 0);
+  const hasDuration = logs.some((l) => l.activity_type === type && l.duration_minutes != null && l.extra_data?.zero !== true && l.extra_data?.untimed !== true);
   const hasQuantity = !hasDuration && logs.some((l) => l.activity_type === type && typeof l.extra_data?.quantity === 'number');
   const canToggleCount = hasDuration || hasQuantity;
   const useCountMode = showCount && canToggleCount;
@@ -1414,7 +1414,7 @@ function ActivityChart({
     logs
       .filter((l) => {
         if (l.activity_type !== type) return false;
-        if (hasDuration) return l.duration_minutes != null && l.duration_minutes > 0;
+        if (hasDuration) return l.duration_minutes != null && l.extra_data?.zero !== true && l.extra_data?.untimed !== true;
         if (hasQuantity) return typeof l.extra_data?.quantity === 'number';
         // pure occurrence count — exclude zero/untimed entries
         if (l.extra_data?.zero === true || l.extra_data?.untimed === true) return false;
@@ -1456,7 +1456,7 @@ function ActivityChart({
       .filter((l) => {
         if (l.activity_type !== type) return false;
         if (l.extra_data?.zero === true || l.extra_data?.untimed === true) return false;
-        if (hasDuration) return l.duration_minutes == null || l.duration_minutes === 0;
+        if (hasDuration) return l.duration_minutes == null;
         if (hasQuantity) return typeof l.extra_data?.quantity !== 'number';
         return false;
       })
