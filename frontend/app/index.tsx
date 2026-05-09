@@ -1410,6 +1410,9 @@ function ActivityChart({
     scrollRef.current?.scrollToEnd({ animated: false });
   }, []);
 
+  // SVG IDs must not contain spaces or special chars — sanitize type name
+  const gradId = type.replace(/[^a-zA-Z0-9_-]/g, '_');
+
   const hasDuration = logs.some((l) => l.activity_type === type && l.duration_minutes != null && l.extra_data?.zero !== true && l.extra_data?.untimed !== true);
   const hasQuantity = !hasDuration && logs.some((l) => l.activity_type === type && typeof l.extra_data?.quantity === 'number');
   const canToggleCount = hasDuration || hasQuantity;
@@ -1426,7 +1429,7 @@ function ActivityChart({
     logs
       .filter((l) => {
         if (l.activity_type !== type) return false;
-        if (hasDuration) return l.duration_minutes != null && l.extra_data?.zero !== true && l.extra_data?.untimed !== true;
+        if (hasDuration) return l.extra_data?.zero !== true && l.extra_data?.untimed !== true;
         if (hasQuantity) return typeof l.extra_data?.quantity === 'number';
         // pure occurrence count — exclude zero/untimed entries
         if (l.extra_data?.zero === true || l.extra_data?.untimed === true) return false;
@@ -1451,7 +1454,7 @@ function ActivityChart({
               return;
             }
           }
-          byDate.set(startKey, (byDate.get(startKey) ?? 0) + l.duration_minutes!);
+          byDate.set(startKey, (byDate.get(startKey) ?? 0) + (l.duration_minutes ?? 0));
         } else {
           const key = dayKey(new Date(l.started_at));
           const val = hasQuantity ? (l.extra_data!.quantity as number) : 1;
@@ -1463,14 +1466,12 @@ function ActivityChart({
   // Days that have at least one entry missing the primary attribute for this type
   // (e.g. untimed entries when the type generally has duration, or entries without quantity)
   const misalignedDays = new Set<string>();
-  if (!useCountMode && (hasDuration || hasQuantity)) {
+  if (!useCountMode && hasQuantity) {
     logs
       .filter((l) => {
         if (l.activity_type !== type) return false;
         if (l.extra_data?.zero === true || l.extra_data?.untimed === true) return false;
-        if (hasDuration) return l.duration_minutes == null;
-        if (hasQuantity) return typeof l.extra_data?.quantity !== 'number';
-        return false;
+        return typeof l.extra_data?.quantity !== 'number';
       })
       .forEach((l) => misalignedDays.add(dayKey(new Date(l.started_at))));
   }
@@ -1620,12 +1621,12 @@ function ActivityChart({
         {/* Pinned Y-axis */}
         <Svg width={YW} height={SVG_H}>
           <Defs>
-            <LinearGradient id={`yax_${type}`} x1="0" y1="0" x2="1" y2="1">
+            <LinearGradient id={`yax_${gradId}`} x1="0" y1="0" x2="1" y2="1">
               <Stop offset="0" stopColor={colorPair[0]} stopOpacity="1" />
               <Stop offset="1" stopColor={colorPair[1]} stopOpacity="1" />
             </LinearGradient>
           </Defs>
-          <Rect x={0} y={0} width={YW} height={SVG_H} fill={`url(#yax_${type})`} />
+          <Rect x={0} y={0} width={YW} height={SVG_H} fill={`url(#yax_${gradId})`} />
           {yTickVals.map((v, i) => (
             <SvgText key={i} x={YW - 4} y={yOf(v) + 4} fontSize={9} fill="rgba(255,255,255,0.75)" textAnchor="end">
               {formatY(v)}
@@ -1645,12 +1646,12 @@ function ActivityChart({
         >
           <Svg width={totalChartW} height={SVG_H}>
             <Defs>
-              <LinearGradient id={`bg_${type}`} x1="0" y1="0" x2="1" y2="1">
+              <LinearGradient id={`bg_${gradId}`} x1="0" y1="0" x2="1" y2="1">
                 <Stop offset="0" stopColor={colorPair[0]} stopOpacity="1" />
                 <Stop offset="1" stopColor={colorPair[1]} stopOpacity="1" />
               </LinearGradient>
             </Defs>
-            <Rect x={0} y={0} width={totalChartW} height={SVG_H} fill={`url(#bg_${type})`} />
+            <Rect x={0} y={0} width={totalChartW} height={SVG_H} fill={`url(#bg_${gradId})`} />
 
             {!hasRangeData && (
               <SvgText x={totalChartW / 2} y={SVG_H / 2 + 5} fontSize={12} fill="rgba(255,255,255,0.6)" textAnchor="middle">
