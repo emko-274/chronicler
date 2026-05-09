@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import List
@@ -15,6 +15,10 @@ class CategoryResponse(BaseModel):
     name: str
     is_hidden: bool
     log_count: int
+
+
+class RenameRequest(BaseModel):
+    new_name: str
 
 
 @router.get("/", response_model=List[CategoryResponse])
@@ -81,6 +85,32 @@ def delete_category_data(
         ).delete()
     db.commit()
     return {"deleted": deleted}
+
+
+@router.post("/{name}/rename")
+def rename_category(
+    name: str,
+    body: RenameRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    new_name = body.new_name.strip()
+    if not new_name:
+        raise HTTPException(status_code=400, detail="new_name is required")
+    if new_name == name:
+        return {"renamed": new_name}
+    db.query(ActivityLog).filter(
+        ActivityLog.activity_type == name,
+        ActivityLog.user_id == current_user.id,
+    ).update({"activity_type": new_name})
+    hidden = db.query(HiddenCategory).filter(
+        HiddenCategory.user_id == current_user.id,
+        HiddenCategory.name == name,
+    ).first()
+    if hidden:
+        hidden.name = new_name
+    db.commit()
+    return {"renamed": new_name}
 
 
 @router.post("/{name}/restore")

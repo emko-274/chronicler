@@ -134,6 +134,9 @@ export const deleteCategoryData = (name: string): Promise<{ deleted: number }> =
 export const restoreCategory = (name: string): Promise<void> =>
   api.post(`/categories/${encodeURIComponent(name)}/restore`).then((r) => r.data);
 
+export const renameCategory = (name: string, newName: string): Promise<{ renamed: string }> =>
+  api.post(`/categories/${encodeURIComponent(name)}/rename`, { new_name: newName }).then((r) => r.data);
+
 export interface LinkedLog {
   id: string;
   activity_type: string;

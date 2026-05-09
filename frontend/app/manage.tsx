@@ -2,6 +2,7 @@ import { useState, useCallback } from 'react';
 import {
   View,
   Text,
+  TextInput,
   TouchableOpacity,
   StyleSheet,
   ScrollView,
@@ -11,7 +12,8 @@ import {
   Platform,
 } from 'react-native';
 import { useFocusEffect } from 'expo-router';
-import { getCategories, hideCategory, deleteCategoryData, restoreCategory, Category } from '@/lib/api';
+import { Ionicons } from '@expo/vector-icons';
+import { getCategories, hideCategory, deleteCategoryData, restoreCategory, renameCategory, Category } from '@/lib/api';
 
 const BUILTIN_TYPES = ['sleep'];
 
@@ -33,6 +35,9 @@ export default function ManageScreen() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [renamingCat, setRenamingCat] = useState<string | null>(null);
+  const [renameText, setRenameText] = useState('');
+  const [renameLoading, setRenameLoading] = useState(false);
 
   const load = async () => {
     try {
@@ -56,6 +61,32 @@ export default function ManageScreen() {
   const onRefresh = () => {
     setRefreshing(true);
     load();
+  };
+
+  const startRename = (cat: Category) => {
+    setRenamingCat(cat.name);
+    setRenameText(cat.name);
+  };
+
+  const cancelRename = () => {
+    setRenamingCat(null);
+    setRenameText('');
+  };
+
+  const doRename = async (oldName: string) => {
+    const newName = renameText.trim();
+    if (!newName || newName === oldName) { cancelRename(); return; }
+    setRenameLoading(true);
+    try {
+      await renameCategory(oldName, newName);
+      setRenamingCat(null);
+      setRenameText('');
+      await load();
+    } catch {
+      Alert.alert('Error', 'Could not rename category.');
+    } finally {
+      setRenameLoading(false);
+    }
   };
 
   const confirmHide = async (cat: Category) => {
@@ -122,30 +153,68 @@ export default function ManageScreen() {
       {visible.length === 0 && (
         <Text style={styles.empty}>No active categories.</Text>
       )}
-      {visible.map((cat) => (
-        <View key={cat.name} style={styles.card}>
-          <View style={styles.cardHeader}>
-            <Text style={styles.cardName}>{cat.name}</Text>
-            <Text style={styles.cardCount}>
-              {cat.log_count} {cat.log_count === 1 ? 'entry' : 'entries'}
-            </Text>
+      {visible.map((cat) => {
+        const isRenaming = renamingCat === cat.name;
+        return (
+          <View key={cat.name} style={styles.card}>
+            <View style={styles.cardHeader}>
+              {isRenaming ? (
+                <TextInput
+                  style={styles.renameInput}
+                  value={renameText}
+                  onChangeText={setRenameText}
+                  autoFocus
+                  autoCorrect={false}
+                  autoCapitalize="none"
+                  returnKeyType="done"
+                  onSubmitEditing={() => doRename(cat.name)}
+                />
+              ) : (
+                <Text style={styles.cardName}>{cat.name}</Text>
+              )}
+              <View style={styles.cardHeaderRight}>
+                {isRenaming ? (
+                  <>
+                    <TouchableOpacity onPress={cancelRename} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                      <Ionicons name="close" size={18} color="#9ca3af" />
+                    </TouchableOpacity>
+                    <TouchableOpacity onPress={() => doRename(cat.name)} disabled={renameLoading} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                      {renameLoading
+                        ? <ActivityIndicator size="small" color="#6366f1" />
+                        : <Ionicons name="checkmark" size={18} color="#6366f1" />}
+                    </TouchableOpacity>
+                  </>
+                ) : (
+                  <>
+                    <Text style={styles.cardCount}>
+                      {cat.log_count} {cat.log_count === 1 ? 'entry' : 'entries'}
+                    </Text>
+                    <TouchableOpacity onPress={() => startRename(cat)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                      <Ionicons name="pencil-outline" size={15} color="#9ca3af" />
+                    </TouchableOpacity>
+                  </>
+                )}
+              </View>
+            </View>
+            {!isRenaming && (
+              <View style={styles.cardActions}>
+                <TouchableOpacity
+                  style={[styles.actionBtn, styles.actionBtnSecondary]}
+                  onPress={() => confirmHide(cat)}
+                >
+                  <Text style={styles.actionBtnSecondaryText}>Remove label</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.actionBtn, styles.actionBtnDanger]}
+                  onPress={() => confirmDeleteData(cat)}
+                >
+                  <Text style={styles.actionBtnDangerText}>Delete data</Text>
+                </TouchableOpacity>
+              </View>
+            )}
           </View>
-          <View style={styles.cardActions}>
-            <TouchableOpacity
-              style={[styles.actionBtn, styles.actionBtnSecondary]}
-              onPress={() => confirmHide(cat)}
-            >
-              <Text style={styles.actionBtnSecondaryText}>Remove label</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.actionBtn, styles.actionBtnDanger]}
-              onPress={() => confirmDeleteData(cat)}
-            >
-              <Text style={styles.actionBtnDangerText}>Delete data</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      ))}
+        );
+      })}
 
       {hidden.length > 0 && (
         <>
@@ -202,9 +271,15 @@ const styles = StyleSheet.create({
   },
   cardHidden: { backgroundColor: '#f9fafb', borderColor: '#e5e7eb' },
   cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
-  cardName: { fontSize: 16, fontWeight: '600', color: '#111827', textTransform: 'capitalize' },
+  cardName: { fontSize: 16, fontWeight: '600', color: '#111827', textTransform: 'capitalize', flex: 1 },
   cardNameHidden: { color: '#9ca3af' },
   cardCount: { fontSize: 13, color: '#9ca3af' },
+  cardHeaderRight: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  renameInput: {
+    flex: 1, fontSize: 16, fontWeight: '600', color: '#111827',
+    borderBottomWidth: 1.5, borderBottomColor: '#6366f1',
+    paddingVertical: 2, marginRight: 8,
+  },
 
   cardActions: { flexDirection: 'row', gap: 8 },
   actionBtn: { flex: 1, paddingVertical: 8, borderRadius: 8, alignItems: 'center' },

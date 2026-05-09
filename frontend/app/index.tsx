@@ -1215,7 +1215,10 @@ function TimelineChart({
 
               {/* Tooltip — native only; web uses a View overlay below */}
               {tooltip && Platform.OS !== 'web' && (() => {
-                const timeStr = formatTimeRange(tooltip.log.started_at, tooltip.log.ended_at);
+                const isTimeless = tooltip.log.extra_data?.zero === true || tooltip.log.extra_data?.untimed === true;
+                const timeStr = isTimeless
+                  ? new Date(tooltip.log.started_at).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
+                  : formatTimeRange(tooltip.log.started_at, tooltip.log.ended_at);
                 const dur = tooltip.log.duration_minutes
                   ? formatDuration(tooltip.log.duration_minutes) : null;
                 const rawQty = tooltip.log.extra_data?.quantity;
@@ -1277,7 +1280,10 @@ function TimelineChart({
         )}
         {/* Web tooltip overlay — positioned absolute, stays visible while hovered */}
         {tooltip && Platform.OS === 'web' && (() => {
-          const timeStr = formatTimeRange(tooltip.log.started_at, tooltip.log.ended_at);
+          const isTimeless = tooltip.log.extra_data?.zero === true || tooltip.log.extra_data?.untimed === true;
+          const timeStr = isTimeless
+            ? new Date(tooltip.log.started_at).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
+            : formatTimeRange(tooltip.log.started_at, tooltip.log.ended_at);
           const dur = tooltip.log.duration_minutes ? formatDuration(tooltip.log.duration_minutes) : null;
           const rawQty = tooltip.log.extra_data?.quantity;
           const qty = typeof rawQty === 'number'
