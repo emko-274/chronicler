@@ -144,6 +144,7 @@ export interface LinkedLog {
   ended_at: string | null;
   duration_minutes: number | null;
   notes: string | null;
+  extra_data: Record<string, unknown> | null;
 }
 
 export interface Note {

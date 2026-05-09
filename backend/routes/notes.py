@@ -34,6 +34,7 @@ def _serialize_log(log: ActivityLog) -> dict:
         "ended_at": log.ended_at.isoformat() if log.ended_at else None,
         "duration_minutes": log.duration_minutes,
         "notes": log.notes,
+        "extra_data": log.extra_data,
     }
 
 

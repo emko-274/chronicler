@@ -171,6 +171,18 @@ function LogNoteCard({ log }: { log: LinkedLog }) {
           {log.ended_at   && <LogAttr label="End"      value={new Date(log.ended_at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })} />}
           {log.duration_minutes != null && <LogAttr label="Duration" value={`${log.duration_minutes} min`} />}
           {log.notes      && <LogAttr label="Note"     value={log.notes} />}
+          {Array.isArray(log.extra_data?.tags) && (log.extra_data!.tags as string[]).length > 0 && (
+            <View style={s.logAttrRow}>
+              <Text style={s.logAttrLabel}>Tags</Text>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 4, flex: 1 }}>
+                {(log.extra_data!.tags as string[]).map(tag => (
+                  <View key={tag} style={s.logTagChip}>
+                    <Text style={s.logTagText}>{tag}</Text>
+                  </View>
+                ))}
+              </View>
+            </View>
+          )}
         </View>
       )}
     </TouchableOpacity>
@@ -753,6 +765,8 @@ const s = StyleSheet.create({
   logAttrRow:    { flexDirection: 'row', gap: 8 },
   logAttrLabel:  { fontSize: 11, fontWeight: '700', color: '#9ca3af', width: 52, textTransform: 'uppercase' },
   logAttrValue:  { fontSize: 12, color: '#374151', flex: 1, lineHeight: 18 },
+  logTagChip:    { backgroundColor: '#eef2ff', borderRadius: 10, paddingHorizontal: 7, paddingVertical: 2 },
+  logTagText:    { fontSize: 11, color: '#4f46e5', fontWeight: '500' },
 
   logsToggle:     { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 4, marginBottom: 4 },
   logsToggleText: { fontSize: 12, fontWeight: '600', color: '#9ca3af' },

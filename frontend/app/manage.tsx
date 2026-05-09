@@ -271,7 +271,7 @@ const styles = StyleSheet.create({
   },
   cardHidden: { backgroundColor: '#f9fafb', borderColor: '#e5e7eb' },
   cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
-  cardName: { fontSize: 16, fontWeight: '600', color: '#111827', textTransform: 'capitalize', flex: 1 },
+  cardName: { fontSize: 16, fontWeight: '600', color: '#111827', flex: 1 },
   cardNameHidden: { color: '#9ca3af' },
   cardCount: { fontSize: 13, color: '#9ca3af' },
   cardHeaderRight: { flexDirection: 'row', alignItems: 'center', gap: 10 },

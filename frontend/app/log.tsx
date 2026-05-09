@@ -806,7 +806,7 @@ const styles = StyleSheet.create({
   // Category selector
   selectedRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   selectedChip: { backgroundColor: '#6366f1', borderRadius: 20, paddingHorizontal: 14, paddingVertical: 8 },
-  selectedChipText: { color: '#fff', fontWeight: '600', textTransform: 'capitalize' },
+  selectedChipText: { color: '#fff', fontWeight: '600' },
   changeText: { color: '#6366f1', fontWeight: '600', fontSize: 13 },
 
   dropdown: {
@@ -831,7 +831,7 @@ const styles = StyleSheet.create({
   },
   dropdownHeaderText: { fontSize: 12, fontWeight: '600', color: '#6b7280', textTransform: 'uppercase', letterSpacing: 0.4 },
   dropdownRow: { paddingHorizontal: 14, paddingVertical: 11, borderBottomWidth: 1, borderBottomColor: '#f3f4f6' },
-  dropdownRowText: { fontSize: 15, color: '#111827', textTransform: 'capitalize' },
+  dropdownRowText: { fontSize: 15, color: '#111827' },
   dropdownNewRow: { paddingHorizontal: 14, paddingVertical: 11, backgroundColor: '#eef2ff', borderBottomWidth: 1, borderBottomColor: '#d1d5db' },
   dropdownNewText: { fontSize: 15, color: '#6366f1', fontWeight: '600' },
   dropdownEmpty: { padding: 14, color: '#9ca3af', fontSize: 14 },
@@ -873,7 +873,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10, paddingVertical: 4,
   },
   tagChipText: { fontSize: 13, color: '#4f46e5', fontWeight: '500' },
-  tagInput: { fontSize: 14, color: '#111827', minWidth: 80, paddingVertical: 2 },
+  tagInput: { fontSize: 14, color: '#111827', flex: 1, minWidth: 80, height: 32, paddingVertical: 4 },
 
   // Timed / 0 min segmented control
   segmentedRow: {

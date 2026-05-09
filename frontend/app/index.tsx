@@ -1228,7 +1228,9 @@ function TimelineChart({
                 const noteSnippet = tooltip.log.notes
                   ? (tooltip.log.notes.length > 22 ? tooltip.log.notes.slice(0, 22) + '…' : tooltip.log.notes)
                   : null;
-                const lines = [timeStr, dur, qty, noteSnippet].filter(Boolean) as string[];
+                const tooltipTags = Array.isArray(tooltip.log.extra_data?.tags) ? (tooltip.log.extra_data!.tags as string[]) : [];
+                const tagLine = tooltipTags.length > 0 ? tooltipTags.join(', ') : null;
+                const lines = [timeStr, dur, qty, noteSnippet, tagLine].filter(Boolean) as string[];
                 const tipH = 18 + lines.length * 13 + 8;
                 const tx = Math.max(0, Math.min(tooltip.barX, totalChartW - TOOLTIP_W));
                 const spaceAbove = tooltip.barY >= tipH + TOOLTIP_PAD;
@@ -1240,7 +1242,7 @@ function TimelineChart({
                     <Rect x={tx} y={ty} width={TOOLTIP_W} height={tipH}
                       fill="white" stroke="#d1d5db" strokeWidth={1} rx={6} />
                     <SvgText x={tx + 10} y={ty + 14} fontSize={11} fontWeight="bold" fill="#111827">
-                      {tooltip.log.activity_type.charAt(0).toUpperCase() + tooltip.log.activity_type.slice(1)}
+                      {tooltip.log.activity_type}
                     </SvgText>
                     {lines.map((line, i) => (
                       <SvgText key={i} x={tx + 10} y={ty + 26 + i * 13} fontSize={9} fill="#6b7280">
@@ -1292,9 +1294,10 @@ function TimelineChart({
           const noteSnippet = tooltip.log.notes
             ? (tooltip.log.notes.length > 40 ? tooltip.log.notes.slice(0, 40) + '…' : tooltip.log.notes)
             : null;
+          const tooltipTags = Array.isArray(tooltip.log.extra_data?.tags) ? (tooltip.log.extra_data!.tags as string[]) : [];
           const lines = [timeStr, dur, qty, noteSnippet].filter(Boolean) as string[];
-          // Estimate height: title row(18) + lines + padding(12)
-          const tipH = 18 + lines.length * 13 + 12;
+          // Estimate height: title row(18) + lines + padding(12) + tag row if present
+          const tipH = 18 + lines.length * 13 + 12 + (tooltipTags.length > 0 ? 20 : 0);
           const tx = Math.max(0, Math.min(tooltip.barX, totalChartW - TOOLTIP_W));
           const rawLeft = tx - scrollXSnap + TIME_LABEL_W;
           const overlayLeft = Math.max(0, Math.min(rawLeft, TIME_LABEL_W + viewportW - TOOLTIP_W));
@@ -1327,7 +1330,7 @@ function TimelineChart({
             >
               <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 3 }}>
                 <Text style={{ fontSize: 11, fontWeight: '700', color: '#111827' }}>
-                  {tooltip.log.activity_type.charAt(0).toUpperCase() + tooltip.log.activity_type.slice(1)}
+                  {tooltip.log.activity_type}
                 </Text>
                 <View style={{ flexDirection: 'row', gap: 4 }}>
                   <TouchableOpacity
@@ -1354,6 +1357,15 @@ function TimelineChart({
               {lines.map((line, i) => (
                 <Text key={i} style={{ fontSize: 10, color: '#6b7280', lineHeight: 13 }}>{line}</Text>
               ))}
+              {tooltipTags.length > 0 && (
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 3, marginTop: 5 }}>
+                  {tooltipTags.map(tag => (
+                    <View key={tag} style={{ backgroundColor: '#eef2ff', borderRadius: 8, paddingHorizontal: 5, paddingVertical: 1 }}>
+                      <Text style={{ fontSize: 9, color: '#4f46e5', fontWeight: '600' }}>{tag}</Text>
+                    </View>
+                  ))}
+                </View>
+              )}
             </View>
           );
         })()}
@@ -1468,7 +1480,7 @@ function ActivityChart({
       <View style={styles.chartPanelItem}>
         <TouchableOpacity style={styles.chartHeader} onPress={onToggleCollapsed} activeOpacity={0.7}>
           <Text style={styles.chartTitle}>
-            {type.charAt(0).toUpperCase() + type.slice(1)} — not enough data yet
+            {type} — not enough data yet
           </Text>
           <Ionicons name={collapsed ? 'chevron-down' : 'chevron-up'} size={16} color="#9ca3af" />
         </TouchableOpacity>
@@ -1568,7 +1580,7 @@ function ActivityChart({
     <View style={styles.chartPanelItem}>
       <View style={styles.chartHeader}>
         <TouchableOpacity style={{ flex: 1 }} onPress={onToggleCollapsed} activeOpacity={0.7}>
-          <Text style={styles.chartTitle}>{type.charAt(0).toUpperCase() + type.slice(1)}</Text>
+          <Text style={styles.chartTitle}>{type}</Text>
           {!collapsed && meanStr !== '' && <Text style={styles.chartMean}>avg {meanStr}</Text>}
         </TouchableOpacity>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
@@ -2313,7 +2325,7 @@ const styles = StyleSheet.create({
     marginRight: 8,
   },
   toggleChipOff: { backgroundColor: '#e5e7eb' },
-  toggleChipText: { color: '#fff', fontWeight: '600', fontSize: 13, textTransform: 'capitalize' },
+  toggleChipText: { color: '#fff', fontWeight: '600', fontSize: 13 },
   toggleChipTextOff: { color: '#6b7280' },
   reorderBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 4,
@@ -2428,7 +2440,7 @@ const styles = StyleSheet.create({
   },
   logRowLeft: { flex: 1 },
   logRowRight: { alignItems: 'flex-end', gap: 6 },
-  activityType: { fontSize: 14, fontWeight: '600', color: '#6366f1', textTransform: 'capitalize' },
+  activityType: { fontSize: 14, fontWeight: '600', color: '#6366f1' },
   duration: { fontSize: 13, color: '#374151', fontWeight: '500' },
   date: { fontSize: 11, color: '#9ca3af', marginTop: 1 },
   notes: { fontSize: 12, color: '#6b7280', marginTop: 2 },
