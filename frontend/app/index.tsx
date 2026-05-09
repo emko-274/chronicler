@@ -497,16 +497,6 @@ function EditLogModal({
               </View>
             )}
 
-            <Text style={editStyles.label}>Notes</Text>
-            <TextInput
-              style={[editStyles.input, editStyles.notesInput]}
-              value={notes}
-              onChangeText={setNotes}
-              multiline
-              placeholder="Optional notes..."
-              placeholderTextColor="#9ca3af"
-            />
-
             <Text style={editStyles.label}>Tags</Text>
             <View style={editStyles.tagsContainer}>
               {tags.map(tag => (
@@ -542,6 +532,16 @@ function EditLogModal({
                 autoCapitalize="none"
               />
             </View>
+
+            <Text style={editStyles.label}>Notes</Text>
+            <TextInput
+              style={[editStyles.input, editStyles.notesInput]}
+              value={notes}
+              onChangeText={setNotes}
+              multiline
+              placeholder="Optional notes..."
+              placeholderTextColor="#9ca3af"
+            />
           </ScrollView>
 
           <TouchableOpacity style={editStyles.saveBtn} onPress={handleSave} disabled={saving}>
@@ -2524,5 +2524,5 @@ const editStyles = StyleSheet.create({
     paddingHorizontal: 10, paddingVertical: 4,
   },
   tagChipText: { fontSize: 13, color: '#4f46e5', fontWeight: '500' },
-  tagInput: { fontSize: 14, color: '#111827', minWidth: 80, paddingVertical: 2 },
+  tagInput: { fontSize: 14, color: '#111827', flex: 1, minWidth: 80, height: 32, paddingVertical: 4 },
 });
