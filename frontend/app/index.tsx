@@ -587,10 +587,27 @@ function dayKey(date: Date): string {
 }
 
 interface TooltipState {
-  log: ActivityLog;
+  logs: ActivityLog[];
   barX: number;
   barY: number;
   barH: number;
+}
+
+function timeOverlap(a: ActivityLog, b: ActivityLog, day: string): boolean {
+  const range = (l: ActivityLog): [number, number] => {
+    const s = new Date(l.started_at);
+    const sf = dayKey(s) !== day ? 0 : (s.getHours() * 60 + s.getMinutes()) / (24 * 60);
+    if (!l.ended_at) return [sf, sf];
+    const e = new Date(l.ended_at);
+    const ef = dayKey(e) === day ? (e.getHours() * 60 + e.getMinutes()) / (24 * 60) : 1.0;
+    return [sf, ef];
+  };
+  const [as, ae] = range(a);
+  const [bs, be] = range(b);
+  if (as === ae && bs === be) return Math.abs(as - bs) < 0.001;
+  if (as === ae) return as >= bs && as <= be;
+  if (bs === be) return bs >= as && bs <= ae;
+  return as < be && bs < ae;
 }
 
 const TOOLTIP_W = 210;
@@ -1144,20 +1161,20 @@ function TimelineChart({
                       const barY = startFrac * CHART_H;
                       const color = colorMap.get(log.activity_type)?.[0] ?? '#6366f1';
                       const barX = colX + BAR_PADDING;
-                      const isHovered = tooltip?.log.id === log.id;
+                      const isHovered = tooltip?.logs.some(l => l.id === log.id) ?? false;
 
                       const showTip = () => {
+                        let barH = 6;
                         if (log.ended_at) {
                           const end = new Date(log.ended_at);
                           const endsToday = dayKey(end) === day;
                           const endFrac = endsToday
                             ? (end.getHours() * 60 + end.getMinutes()) / (24 * 60)
                             : 1.0;
-                          const barH = Math.max((endFrac - startFrac) * CHART_H, 3);
-                          setTooltip({ log, barX, barY, barH });
-                        } else {
-                          setTooltip({ log, barX, barY, barH: 6 });
+                          barH = Math.max((endFrac - startFrac) * CHART_H, 3);
                         }
+                        const overlapping = entries.filter(other => timeOverlap(log, other, day));
+                        setTooltip({ logs: overlapping.length > 0 ? overlapping : [log], barX, barY, barH });
                       };
                       const hideTip = () => setTooltip(null);
                       const toggleTip = () => isHovered ? hideTip() : showTip();
@@ -1215,40 +1232,51 @@ function TimelineChart({
 
               {/* Tooltip — native only; web uses a View overlay below */}
               {tooltip && Platform.OS !== 'web' && (() => {
-                const isTimeless = tooltip.log.extra_data?.zero === true || tooltip.log.extra_data?.untimed === true;
-                const timeStr = isTimeless
-                  ? new Date(tooltip.log.started_at).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
-                  : formatTimeRange(tooltip.log.started_at, tooltip.log.ended_at);
-                const dur = tooltip.log.duration_minutes
-                  ? formatDuration(tooltip.log.duration_minutes) : null;
-                const rawQty = tooltip.log.extra_data?.quantity;
-                const qty = typeof rawQty === 'number'
-                  ? `${rawQty % 1 === 0 ? rawQty.toFixed(0) : rawQty.toFixed(1)}${tooltip.log.extra_data?.unit ? ` ${tooltip.log.extra_data.unit}` : ''}`
-                  : null;
-                const noteSnippet = tooltip.log.notes
-                  ? (tooltip.log.notes.length > 22 ? tooltip.log.notes.slice(0, 22) + '…' : tooltip.log.notes)
-                  : null;
-                const tooltipTags = Array.isArray(tooltip.log.extra_data?.tags) ? (tooltip.log.extra_data!.tags as string[]) : [];
-                const tagLine = tooltipTags.length > 0 ? tooltipTags.join(', ') : null;
-                const lines = [timeStr, dur, qty, noteSnippet, tagLine].filter(Boolean) as string[];
-                const tipH = 18 + lines.length * 13 + 8;
+                const entryData = tooltip.logs.map(tlog => {
+                  const isTimeless = tlog.extra_data?.zero === true || tlog.extra_data?.untimed === true;
+                  const timeStr = isTimeless
+                    ? new Date(tlog.started_at).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
+                    : formatTimeRange(tlog.started_at, tlog.ended_at);
+                  const dur = tlog.duration_minutes ? formatDuration(tlog.duration_minutes) : null;
+                  const rawQty = tlog.extra_data?.quantity;
+                  const qty = typeof rawQty === 'number'
+                    ? `${rawQty % 1 === 0 ? rawQty.toFixed(0) : rawQty.toFixed(1)}${tlog.extra_data?.unit ? ` ${tlog.extra_data.unit}` : ''}`
+                    : null;
+                  const noteSnippet = tlog.notes ? (tlog.notes.length > 22 ? tlog.notes.slice(0, 22) + '…' : tlog.notes) : null;
+                  const tags = Array.isArray(tlog.extra_data?.tags) ? (tlog.extra_data!.tags as string[]).join(', ') : null;
+                  const lines = [timeStr, dur, qty, noteSnippet, tags].filter(Boolean) as string[];
+                  return { tlog, lines };
+                });
+                const ENTRY_H = (e: { lines: string[] }) => 15 + e.lines.length * 13;
+                const tipH = entryData.reduce((sum, e, i) => sum + ENTRY_H(e) + (i > 0 ? 6 : 0), 0) + 12;
                 const tx = Math.max(0, Math.min(tooltip.barX, totalChartW - TOOLTIP_W));
                 const spaceAbove = tooltip.barY >= tipH + TOOLTIP_PAD;
                 const ty = spaceAbove
                   ? tooltip.barY - tipH - TOOLTIP_PAD
                   : tooltip.barY + tooltip.barH + TOOLTIP_PAD;
+                let curY = ty + 10;
                 return (
                   <G key="tooltip">
                     <Rect x={tx} y={ty} width={TOOLTIP_W} height={tipH}
                       fill="white" stroke="#d1d5db" strokeWidth={1} rx={6} />
-                    <SvgText x={tx + 10} y={ty + 14} fontSize={11} fontWeight="bold" fill="#111827">
-                      {tooltip.log.activity_type}
-                    </SvgText>
-                    {lines.map((line, i) => (
-                      <SvgText key={i} x={tx + 10} y={ty + 26 + i * 13} fontSize={9} fill="#6b7280">
-                        {line}
-                      </SvgText>
-                    ))}
+                    {entryData.map(({ tlog, lines }, ei) => {
+                      const color = colorMap.get(tlog.activity_type)?.[0] ?? '#111827';
+                      const entryY = curY;
+                      curY += ENTRY_H({ lines }) + (ei < entryData.length - 1 ? 6 : 0);
+                      return (
+                        <G key={tlog.id}>
+                          {ei > 0 && <Line x1={tx + 6} y1={entryY - 3} x2={tx + TOOLTIP_W - 6} y2={entryY - 3} stroke="#e5e7eb" strokeWidth={1} />}
+                          <SvgText x={tx + 10} y={entryY + 11} fontSize={10} fontWeight="bold" fill={color}>
+                            {tlog.activity_type.charAt(0).toUpperCase() + tlog.activity_type.slice(1)}
+                          </SvgText>
+                          {lines.map((line, i) => (
+                            <SvgText key={i} x={tx + 10} y={entryY + 23 + i * 13} fontSize={9} fill="#6b7280">
+                              {line}
+                            </SvgText>
+                          ))}
+                        </G>
+                      );
+                    })}
                   </G>
                 );
               })()}
@@ -1282,28 +1310,12 @@ function TimelineChart({
         )}
         {/* Web tooltip overlay — positioned absolute, stays visible while hovered */}
         {tooltip && Platform.OS === 'web' && (() => {
-          const isTimeless = tooltip.log.extra_data?.zero === true || tooltip.log.extra_data?.untimed === true;
-          const timeStr = isTimeless
-            ? new Date(tooltip.log.started_at).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
-            : formatTimeRange(tooltip.log.started_at, tooltip.log.ended_at);
-          const dur = tooltip.log.duration_minutes ? formatDuration(tooltip.log.duration_minutes) : null;
-          const rawQty = tooltip.log.extra_data?.quantity;
-          const qty = typeof rawQty === 'number'
-            ? `${rawQty % 1 === 0 ? rawQty.toFixed(0) : rawQty.toFixed(1)}${tooltip.log.extra_data?.unit ? ` ${tooltip.log.extra_data.unit}` : ''}`
-            : null;
-          const noteSnippet = tooltip.log.notes
-            ? (tooltip.log.notes.length > 40 ? tooltip.log.notes.slice(0, 40) + '…' : tooltip.log.notes)
-            : null;
-          const tooltipTags = Array.isArray(tooltip.log.extra_data?.tags) ? (tooltip.log.extra_data!.tags as string[]) : [];
-          const lines = [timeStr, dur, qty, noteSnippet].filter(Boolean) as string[];
-          // Estimate height: title row(18) + lines + padding(12) + tag row if present
-          const tipH = 18 + lines.length * 13 + 12 + (tooltipTags.length > 0 ? 20 : 0);
           const tx = Math.max(0, Math.min(tooltip.barX, totalChartW - TOOLTIP_W));
           const rawLeft = tx - scrollXSnap + TIME_LABEL_W;
           const overlayLeft = Math.max(0, Math.min(rawLeft, TIME_LABEL_W + viewportW - TOOLTIP_W));
-          const spaceAbove = tooltip.barY >= tipH + TOOLTIP_PAD;
+          const spaceAbove = tooltip.barY >= 120 + TOOLTIP_PAD;
           const overlayTop = spaceAbove
-            ? tooltip.barY - tipH - TOOLTIP_PAD
+            ? tooltip.barY - 120 - TOOLTIP_PAD
             : tooltip.barY + tooltip.barH + TOOLTIP_PAD;
           return (
             <View
@@ -1328,44 +1340,63 @@ function TimelineChart({
               onMouseEnter={cancelHide}
               onMouseLeave={() => setTooltip(null)}
             >
-              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 3 }}>
-                <Text style={{ fontSize: 11, fontWeight: '700', color: '#111827' }}>
-                  {tooltip.log.activity_type}
-                </Text>
-                <View style={{ flexDirection: 'row', gap: 4 }}>
-                  <TouchableOpacity
-                    onPress={() => { setTooltip(null); onEdit(tooltip.log); }}
-                    hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-                  >
-                    <Ionicons name="pencil-outline" size={12} color="#9ca3af" />
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    onPress={async () => {
-                      const log = tooltip.log;
-                      const ok = window.confirm(`Delete this ${log.activity_type} entry?`);
-                      if (!ok) return;
-                      setTooltip(null);
-                      await deleteLog(log.id);
-                      onDelete();
-                    }}
-                    hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-                  >
-                    <Ionicons name="trash-outline" size={12} color="#9ca3af" />
-                  </TouchableOpacity>
-                </View>
-              </View>
-              {lines.map((line, i) => (
-                <Text key={i} style={{ fontSize: 10, color: '#6b7280', lineHeight: 13 }}>{line}</Text>
-              ))}
-              {tooltipTags.length > 0 && (
-                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 3, marginTop: 5 }}>
-                  {tooltipTags.map(tag => (
-                    <View key={tag} style={{ backgroundColor: '#eef2ff', borderRadius: 8, paddingHorizontal: 5, paddingVertical: 1 }}>
-                      <Text style={{ fontSize: 9, color: '#4f46e5', fontWeight: '600' }}>{tag}</Text>
+              {tooltip.logs.map((tlog, ei) => {
+                const isTimeless = tlog.extra_data?.zero === true || tlog.extra_data?.untimed === true;
+                const timeStr = isTimeless
+                  ? new Date(tlog.started_at).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
+                  : formatTimeRange(tlog.started_at, tlog.ended_at);
+                const dur = tlog.duration_minutes ? formatDuration(tlog.duration_minutes) : null;
+                const rawQty = tlog.extra_data?.quantity;
+                const qty = typeof rawQty === 'number'
+                  ? `${rawQty % 1 === 0 ? rawQty.toFixed(0) : rawQty.toFixed(1)}${tlog.extra_data?.unit ? ` ${tlog.extra_data.unit}` : ''}`
+                  : null;
+                const noteSnippet = tlog.notes ? (tlog.notes.length > 40 ? tlog.notes.slice(0, 40) + '…' : tlog.notes) : null;
+                const tlogTags = Array.isArray(tlog.extra_data?.tags) ? (tlog.extra_data!.tags as string[]) : [];
+                const lines = [timeStr, dur, qty, noteSnippet].filter(Boolean) as string[];
+                const color = colorMap.get(tlog.activity_type)?.[0] ?? '#6366f1';
+                return (
+                  <View key={tlog.id}>
+                    {ei > 0 && <View style={{ height: 1, backgroundColor: '#e5e7eb', marginVertical: 6 }} />}
+                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 2 }}>
+                      <Text style={{ fontSize: 11, fontWeight: '700', color }}>
+                        {tlog.activity_type.charAt(0).toUpperCase() + tlog.activity_type.slice(1)}
+                      </Text>
+                      <View style={{ flexDirection: 'row', gap: 4 }}>
+                        <TouchableOpacity
+                          onPress={() => { setTooltip(null); onEdit(tlog); }}
+                          hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                        >
+                          <Ionicons name="pencil-outline" size={12} color="#9ca3af" />
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          onPress={async () => {
+                            const ok = window.confirm(`Delete this ${tlog.activity_type} entry?`);
+                            if (!ok) return;
+                            setTooltip(null);
+                            await deleteLog(tlog.id);
+                            onDelete();
+                          }}
+                          hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                        >
+                          <Ionicons name="trash-outline" size={12} color="#9ca3af" />
+                        </TouchableOpacity>
+                      </View>
                     </View>
-                  ))}
-                </View>
-              )}
+                    {lines.map((line, i) => (
+                      <Text key={i} style={{ fontSize: 10, color: '#6b7280', lineHeight: 13 }}>{line}</Text>
+                    ))}
+                    {tlogTags.length > 0 && (
+                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 3, marginTop: 4 }}>
+                        {tlogTags.map(tag => (
+                          <View key={tag} style={{ backgroundColor: '#eef2ff', borderRadius: 8, paddingHorizontal: 5, paddingVertical: 1 }}>
+                            <Text style={{ fontSize: 9, color: '#4f46e5', fontWeight: '600' }}>{tag}</Text>
+                          </View>
+                        ))}
+                      </View>
+                    )}
+                  </View>
+                );
+              })}
             </View>
           );
         })()}

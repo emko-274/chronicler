@@ -156,6 +156,7 @@ const fmt = StyleSheet.create({
 
 function LogNoteCard({ log }: { log: LinkedLog }) {
   const [expanded, setExpanded] = useState(false);
+  const cardTags = Array.isArray(log.extra_data?.tags) ? (log.extra_data!.tags as string[]) : [];
   return (
     <TouchableOpacity style={s.logCard} onPress={() => setExpanded(e => !e)} activeOpacity={0.8}>
       <View style={s.logCardRow}>
@@ -165,6 +166,15 @@ function LogNoteCard({ log }: { log: LinkedLog }) {
           <Ionicons name={expanded ? 'chevron-up' : 'chevron-down'} size={13} color="#9ca3af" />
         </View>
       </View>
+      {!expanded && cardTags.length > 0 && (
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 5 }}>
+          {cardTags.map(tag => (
+            <View key={tag} style={s.logTagChip}>
+              <Text style={s.logTagText}>#{tag}</Text>
+            </View>
+          ))}
+        </View>
+      )}
       {expanded && (
         <View style={s.logCardAttrs}>
           <LogAttr label="Start"    value={new Date(log.started_at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })} />
@@ -422,7 +432,7 @@ function DayList({ days, selected, onSelect, loading }: {
               <Text style={[s.listItemDate, on && s.listItemDateOn]}>{dateLabel(day.date)}</Text>
               <Text style={[s.listItemMeta, on && s.listItemMetaOn]} numberOfLines={1}>
                 {[
-                  day.noteCount > 0 ? `${day.noteCount} note${day.noteCount !== 1 ? 's' : ''}` : null,
+                  day.noteCount > 0 ? `${day.noteCount} entr${day.noteCount !== 1 ? 'ies' : 'y'}` : null,
                   day.notePreview ? day.notePreview.replace(/^#+\s|[-*]\s|\*\*/g, '') : null,
                 ].filter(Boolean).join(' · ')}
               </Text>
