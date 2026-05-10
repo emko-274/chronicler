@@ -2091,14 +2091,17 @@ export default function DashboardScreen() {
         data.forEach((l) => next.add(l.activity_type));
         return next;
       });
-      // Append any brand-new types to the end of the user's layer order
+      // Restore saved order, then append any new types not yet in the saved list
       setTypeOrder((prev) => {
-        const existing = new Set(prev);
-        const brandNew: string[] = [];
+        const savedRaw = typeof window !== 'undefined' ? localStorage.getItem('activity-tracker:type-order') : null;
+        const saved: string[] = savedRaw ? JSON.parse(savedRaw) : prev;
+        const allTypes = new Set(data.map(l => l.activity_type));
+        const base = saved.filter(t => allTypes.has(t));
+        const existing = new Set(base);
         [...data].reverse().forEach((l) => {
-          if (!existing.has(l.activity_type)) { existing.add(l.activity_type); brandNew.push(l.activity_type); }
+          if (!existing.has(l.activity_type)) { existing.add(l.activity_type); base.push(l.activity_type); }
         });
-        return brandNew.length ? [...prev, ...brandNew] : prev;
+        return base;
       });
     } finally {
       setLoading(false);
@@ -2176,7 +2179,10 @@ export default function DashboardScreen() {
               visible={visibleTypes}
               colorMap={colorMap}
               onToggle={toggleType}
-              onReorder={setTypeOrder}
+              onReorder={(order) => {
+                setTypeOrder(order);
+                if (typeof window !== 'undefined') localStorage.setItem('activity-tracker:type-order', JSON.stringify(order));
+              }}
             />
 
             <TimelineChart
