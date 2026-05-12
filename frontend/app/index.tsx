@@ -19,7 +19,9 @@ import { useFocusEffect } from 'expo-router';
 import { Svg, Rect, Text as SvgText, Line, G, Circle, Path, Defs, LinearGradient, Stop } from 'react-native-svg';
 import { Ionicons } from '@expo/vector-icons';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
-import { getLogs, deleteLog, updateLog, ActivityLog } from '@/lib/api';
+import { getLogs, deleteLog, ActivityLog, getAcceptedSharedWithMe, Share } from '@/lib/api';
+import SharePanel from '@/components/SharePanel';
+import EditLogModal from '@/components/EditLogModal';
 
 const SCREEN_W = Dimensions.get('window').width;
 
@@ -72,500 +74,9 @@ function chartUnit(type: string): string {
   return type === 'sleep' || type === 'work' ? 'hrs' : 'min';
 }
 
-// ── Edit modal helpers (module-level so React reuses the same DOM nodes) ───
-
-function toLocalInputValue(date: Date): string {
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return (
-    `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}` +
-    `T${pad(date.getHours())}:${pad(date.getMinutes())}`
-  );
-}
-
 function toLocalDateValue(date: Date): string {
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
-}
-
-function formatDateTime(date: Date): string {
-  return date.toLocaleString(undefined, {
-    month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
-  });
-}
-
-type PickerState = { target: 'start' | 'end' | 'date_only'; mode: 'date' | 'time' } | null;
-
-// Must be at module level — if defined inside EditLogModal, React remounts the
-// <input> on every render, closing the browser's native date picker immediately.
-function EditDateInput({ value, onChange }: { value: Date; onChange: (d: Date) => void }) {
-  if (Platform.OS !== 'web') return null;
-  return (
-    // @ts-ignore — plain HTML input is valid on web
-    <input
-      type="datetime-local"
-      value={toLocalInputValue(value)}
-      max={toLocalInputValue(new Date())}
-      onChange={(e: React.ChangeEvent<HTMLInputElement>) => onChange(new Date(e.target.value))}
-      style={{
-        fontSize: 15, padding: 12, borderRadius: 8,
-        border: '1px solid #d1d5db', backgroundColor: '#fff',
-        color: '#111827', width: '100%', boxSizing: 'border-box',
-      }}
-    />
-  );
-}
-
-function EditDateOnlyInput({ value, onChange }: { value: Date; onChange: (d: Date) => void }) {
-  if (Platform.OS !== 'web') return null;
-  return (
-    // @ts-ignore
-    <input
-      type="date"
-      value={toLocalDateValue(value)}
-      max={toLocalDateValue(new Date())}
-      onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
-        const d = new Date(e.target.value + 'T12:00:00');
-        onChange(d);
-      }}
-      style={{
-        fontSize: 15, padding: 12, borderRadius: 8,
-        border: '1px solid #d1d5db', backgroundColor: '#fff',
-        color: '#111827', width: '100%', boxSizing: 'border-box',
-      }}
-    />
-  );
-}
-
-const PRESET_UNITS = ['µg', 'mg', 'g', 'kg', 'ml', 'L', 'bpm', 'rpm', 'ppm', 'mmHg', '%', 'dB'];
-
-function UnitPicker({ value, onChange }: { value: string; onChange: (u: string) => void }) {
-  const [open, setOpen] = useState(false);
-  const [customUnits, setCustomUnits] = useState<string[]>([]);
-  const [draft, setDraft] = useState('');
-  const allUnits = [...PRESET_UNITS, ...customUnits];
-
-  const addCustom = () => {
-    const u = draft.trim();
-    if (!u) return;
-    if (!allUnits.some((x) => x.toLowerCase() === u.toLowerCase())) {
-      setCustomUnits((prev) => [...prev, u]);
-    }
-    onChange(u);
-    setDraft('');
-    setOpen(false);
-  };
-
-  return (
-    <>
-      <TouchableOpacity style={unitPickerStyles.btn} onPress={() => setOpen(true)} activeOpacity={0.7}>
-        <Text style={value ? unitPickerStyles.btnText : unitPickerStyles.btnPlaceholder} numberOfLines={1}>
-          {value || 'Unit'}
-        </Text>
-        <Ionicons name="chevron-down" size={13} color="#9ca3af" />
-      </TouchableOpacity>
-
-      <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
-        <TouchableOpacity style={unitPickerStyles.overlay} activeOpacity={1} onPress={() => setOpen(false)}>
-          <View style={unitPickerStyles.sheet} onStartShouldSetResponder={() => true}>
-            <View style={unitPickerStyles.sheetHeader}>
-              <Text style={unitPickerStyles.sheetTitle}>Select Unit</Text>
-              <TouchableOpacity onPress={() => setOpen(false)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                <Ionicons name="close" size={18} color="#9ca3af" />
-              </TouchableOpacity>
-            </View>
-            <ScrollView style={{ maxHeight: 220 }} keyboardShouldPersistTaps="handled">
-              <TouchableOpacity
-                style={[unitPickerStyles.option, value === '' && unitPickerStyles.optionOn]}
-                onPress={() => { onChange(''); setOpen(false); }}
-              >
-                <Text style={[unitPickerStyles.optionText, value === '' && unitPickerStyles.optionTextOn]}>None</Text>
-                {value === '' && <Ionicons name="checkmark" size={16} color="#6366f1" />}
-              </TouchableOpacity>
-              {allUnits.map((u) => (
-                <TouchableOpacity
-                  key={u}
-                  style={[unitPickerStyles.option, value === u && unitPickerStyles.optionOn]}
-                  onPress={() => { onChange(u); setOpen(false); }}
-                >
-                  <Text style={[unitPickerStyles.optionText, value === u && unitPickerStyles.optionTextOn]}>{u}</Text>
-                  {value === u && <Ionicons name="checkmark" size={16} color="#6366f1" />}
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-            <View style={unitPickerStyles.customRow}>
-              <TextInput
-                style={unitPickerStyles.customInput}
-                placeholder="Add custom unit…"
-                placeholderTextColor="#9ca3af"
-                value={draft}
-                onChangeText={setDraft}
-                autoCorrect={false}
-                autoCapitalize="none"
-                onSubmitEditing={addCustom}
-                returnKeyType="done"
-              />
-              <TouchableOpacity
-                style={[unitPickerStyles.customAddBtn, !draft.trim() && unitPickerStyles.customAddBtnOff]}
-                onPress={addCustom}
-              >
-                <Text style={unitPickerStyles.customAddText}>Add</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </TouchableOpacity>
-      </Modal>
-    </>
-  );
-}
-
-const unitPickerStyles = StyleSheet.create({
-  btn: {
-    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    backgroundColor: '#f9fafb', borderRadius: 8, borderWidth: 1, borderColor: '#d1d5db',
-    paddingHorizontal: 12, paddingVertical: 12, gap: 4,
-  },
-  btnText: { fontSize: 15, color: '#111827', flex: 1 },
-  btnPlaceholder: { fontSize: 15, color: '#9ca3af', flex: 1 },
-  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center', padding: 24 },
-  sheet: { backgroundColor: '#fff', borderRadius: 16, width: '100%', maxWidth: 360, overflow: 'hidden' },
-  sheetHeader: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#f3f4f6',
-  },
-  sheetTitle: { fontSize: 15, fontWeight: '700', color: '#111827' },
-  option: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#f9fafb',
-  },
-  optionOn: { backgroundColor: '#eef2ff' },
-  optionText: { fontSize: 15, color: '#374151' },
-  optionTextOn: { color: '#6366f1', fontWeight: '600' },
-  customRow: {
-    flexDirection: 'row', alignItems: 'center', gap: 8,
-    padding: 12, borderTopWidth: 1, borderTopColor: '#f3f4f6', backgroundColor: '#f9fafb',
-  },
-  customInput: {
-    flex: 1, backgroundColor: '#fff', borderRadius: 8, borderWidth: 1, borderColor: '#d1d5db',
-    paddingHorizontal: 10, paddingVertical: 8, fontSize: 14, color: '#111827',
-  },
-  customAddBtn: { backgroundColor: '#6366f1', borderRadius: 8, paddingHorizontal: 14, paddingVertical: 8 },
-  customAddBtnOff: { backgroundColor: '#e5e7eb' },
-  customAddText: { color: '#fff', fontWeight: '600', fontSize: 14 },
-});
-
-function EditLogModal({
-  log,
-  onClose,
-  onSave,
-}: {
-  log: ActivityLog | null;
-  onClose: () => void;
-  onSave: () => void;
-}) {
-  const [activityType, setActivityType] = useState('');
-  const [hasStart, setHasStart] = useState(true);
-  const [entryDate, setEntryDate] = useState(new Date()); // date only, used when !hasStart
-  const [startDate, setStartDate] = useState(new Date());
-  const [endDate, setEndDate] = useState<Date | null>(null);
-  const [notes, setNotes] = useState('');
-  const [showQuantity, setShowQuantity] = useState(false);
-  const [quantityText, setQuantityText] = useState('');
-  const [quantityUnit, setQuantityUnit] = useState('');
-  const [tags, setTags] = useState<string[]>([]);
-  const [tagInput, setTagInput] = useState('');
-  const [saving, setSaving] = useState(false);
-  const [picker, setPicker] = useState<PickerState>(null);
-
-  useEffect(() => {
-    if (!log) return;
-    setActivityType(log.activity_type);
-    const timeless = log.extra_data?.untimed === true || log.extra_data?.zero === true;
-    setHasStart(!timeless);
-    const started = new Date(log.started_at);
-    if (timeless) {
-      setEntryDate(started);
-    } else {
-      setStartDate(started);
-      setEndDate(log.ended_at ? new Date(log.ended_at) : null);
-    }
-    setNotes(log.notes ?? '');
-    const qty = log.extra_data?.quantity;
-    if (typeof qty === 'number') {
-      setShowQuantity(true);
-      setQuantityText(qty % 1 === 0 ? qty.toFixed(0) : String(qty));
-      setQuantityUnit(String(log.extra_data?.unit ?? ''));
-    } else {
-      setShowQuantity(false);
-      setQuantityText('');
-      setQuantityUnit('');
-    }
-    setTags(Array.isArray(log.extra_data?.tags) ? (log.extra_data.tags as string[]) : []);
-    setTagInput('');
-  }, [log?.id]);
-
-  const onPickerChange = (event: DateTimePickerEvent, selected?: Date) => {
-    if (!picker || !selected) { setPicker(null); return; }
-    if (event.type === 'dismissed') { setPicker(null); return; }
-    if (picker.target === 'date_only') {
-      const d = new Date(selected);
-      d.setHours(12, 0, 0, 0);
-      setEntryDate(d);
-      setPicker(null);
-      return;
-    }
-    if (picker.target === 'start') setStartDate(selected);
-    else setEndDate(selected);
-    if (Platform.OS === 'android' && picker.mode === 'date') {
-      setPicker({ target: picker.target, mode: 'time' });
-    } else {
-      setPicker(null);
-    }
-  };
-
-  const handleSave = async () => {
-    if (!log) return;
-    if (hasStart && endDate && endDate <= startDate) {
-      Alert.alert('Invalid time', 'End time must be after start time.');
-      return;
-    }
-    const quantityExtra = showQuantity && quantityText.trim()
-      ? { quantity: parseFloat(quantityText), unit: quantityUnit.trim() }
-      : null;
-    const tagsExtra = tags.length > 0 ? { tags } : null;
-    setSaving(true);
-    try {
-      if (!hasStart) {
-        const d = new Date(entryDate);
-        d.setHours(12, 0, 0, 0);
-        await updateLog(log.id, {
-          activity_type: activityType,
-          started_at: d.toISOString(),
-          ended_at: null,
-          notes: notes.trim() || null,
-          extra_data: { zero: true, ...(tagsExtra ?? {}), ...(quantityExtra ?? {}) },
-        });
-      } else {
-        await updateLog(log.id, {
-          activity_type: activityType,
-          started_at: startDate.toISOString(),
-          ended_at: endDate ? endDate.toISOString() : null,
-          notes: notes.trim() || null,
-          extra_data: (tagsExtra || quantityExtra)
-            ? { ...(tagsExtra ?? {}), ...(quantityExtra ?? {}) }
-            : null,
-        });
-      }
-      onSave();
-    } catch {
-      Alert.alert('Error', 'Could not save changes. Is the backend running?');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <Modal visible={!!log} transparent animationType="slide" onRequestClose={onClose}>
-      <KeyboardAvoidingView
-        style={editStyles.overlay}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      >
-        <View style={editStyles.sheet}>
-          {/* Header */}
-          <View style={editStyles.header}>
-            <Text style={editStyles.title}>Edit Entry</Text>
-            <TouchableOpacity onPress={onClose} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-              <Ionicons name="close" size={22} color="#374151" />
-            </TouchableOpacity>
-          </View>
-
-          <ScrollView keyboardShouldPersistTaps="handled">
-            <Text style={editStyles.label}>Activity Type</Text>
-            <TextInput
-              style={editStyles.input}
-              value={activityType}
-              onChangeText={setActivityType}
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
-
-            {!hasStart ? (
-              <>
-                <Text style={editStyles.label}>Date</Text>
-                {Platform.OS === 'web' ? (
-                  <EditDateOnlyInput value={entryDate} onChange={setEntryDate} />
-                ) : (
-                  <TouchableOpacity
-                    style={editStyles.dateBtn}
-                    onPress={() => setPicker({ target: 'date_only', mode: 'date' })}
-                  >
-                    <Text style={editStyles.dateBtnText}>
-                      {entryDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
-                    </Text>
-                  </TouchableOpacity>
-                )}
-                <View style={editStyles.endRow}>
-                  <Text style={editStyles.label}>Start Time</Text>
-                  <TouchableOpacity onPress={() => setHasStart(true)}>
-                    <Text style={editStyles.addEndText}>+ Add</Text>
-                  </TouchableOpacity>
-                </View>
-              </>
-            ) : (
-              <>
-                <View style={editStyles.endRow}>
-                  <Text style={editStyles.label}>Start Time</Text>
-                </View>
-                <View style={[editStyles.endRow, { alignItems: 'stretch' }]}>
-                  {Platform.OS === 'web' ? (
-                    <View style={{ flex: 1 }}>
-                      <EditDateInput value={startDate} onChange={setStartDate} />
-                    </View>
-                  ) : (
-                    <TouchableOpacity
-                      style={[editStyles.dateBtn, { flex: 1 }]}
-                      onPress={() => setPicker({ target: 'start', mode: 'date' })}
-                    >
-                      <Text style={editStyles.dateBtnText}>{formatDateTime(startDate)}</Text>
-                    </TouchableOpacity>
-                  )}
-                  <TouchableOpacity
-                    onPress={() => { setHasStart(false); setEndDate(null); }}
-                    style={editStyles.removeEndBtn}
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                  >
-                    <Ionicons name="close-circle" size={20} color="#9ca3af" />
-                  </TouchableOpacity>
-                </View>
-
-                <Text style={editStyles.label}>End Time</Text>
-                {endDate !== null ? (
-                  <View style={editStyles.endRow}>
-                    {Platform.OS === 'web' ? (
-                      <View style={{ flex: 1 }}>
-                        <EditDateInput value={endDate} onChange={setEndDate} />
-                      </View>
-                    ) : (
-                      <TouchableOpacity
-                        style={[editStyles.dateBtn, { flex: 1 }]}
-                        onPress={() => setPicker({ target: 'end', mode: 'date' })}
-                      >
-                        <Text style={editStyles.dateBtnText}>{formatDateTime(endDate)}</Text>
-                      </TouchableOpacity>
-                    )}
-                    <TouchableOpacity
-                      onPress={() => setEndDate(null)}
-                      style={editStyles.removeEndBtn}
-                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                    >
-                      <Ionicons name="close-circle" size={20} color="#9ca3af" />
-                    </TouchableOpacity>
-                  </View>
-                ) : (
-                  <TouchableOpacity onPress={() => setEndDate(new Date())}>
-                    <Text style={editStyles.addEndText}>+ Add end time</Text>
-                  </TouchableOpacity>
-                )}
-              </>
-            )}
-
-            <View style={editStyles.endRow}>
-              <Text style={editStyles.label}>Quantity</Text>
-              {!showQuantity && (
-                <TouchableOpacity onPress={() => setShowQuantity(true)}>
-                  <Text style={editStyles.addEndText}>+ Add</Text>
-                </TouchableOpacity>
-              )}
-            </View>
-            {showQuantity && (
-              <View style={editStyles.quantityRow}>
-                <TextInput
-                  style={[editStyles.input, { flex: 1 }]}
-                  placeholder="Amount"
-                  placeholderTextColor="#9ca3af"
-                  value={quantityText}
-                  onChangeText={setQuantityText}
-                  keyboardType="decimal-pad"
-                />
-                <UnitPicker value={quantityUnit} onChange={setQuantityUnit} />
-                <TouchableOpacity
-                  onPress={() => { setShowQuantity(false); setQuantityText(''); setQuantityUnit(''); }}
-                  style={editStyles.removeEndBtn}
-                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                >
-                  <Ionicons name="close-circle" size={20} color="#9ca3af" />
-                </TouchableOpacity>
-              </View>
-            )}
-
-            <Text style={editStyles.label}>Tags</Text>
-            <View style={editStyles.tagsContainer}>
-              {tags.map(tag => (
-                <View key={tag} style={editStyles.tagChip}>
-                  <Text style={editStyles.tagChipText}>{tag}</Text>
-                  <TouchableOpacity onPress={() => setTags(t => t.filter(x => x !== tag))} hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}>
-                    <Ionicons name="close" size={11} color="#6366f1" />
-                  </TouchableOpacity>
-                </View>
-              ))}
-              <TextInput
-                style={editStyles.tagInput}
-                placeholder={tags.length === 0 ? 'Type a tag…' : 'Add another…'}
-                placeholderTextColor="#9ca3af"
-                value={tagInput}
-                onChangeText={(t) => {
-                  if (t.endsWith(',') || t.endsWith(' ')) {
-                    const tag = t.slice(0, -1).trim();
-                    if (tag && !tags.includes(tag)) setTags(prev => [...prev, tag]);
-                    setTagInput('');
-                    return;
-                  }
-                  setTagInput(t);
-                }}
-                onSubmitEditing={() => {
-                  const t = tagInput.trim();
-                  if (t && !tags.includes(t)) setTags(prev => [...prev, t]);
-                  setTagInput('');
-                }}
-                returnKeyType="done"
-                blurOnSubmit={false}
-                autoCorrect={false}
-                autoCapitalize="none"
-              />
-            </View>
-
-            <Text style={editStyles.label}>Notes</Text>
-            <TextInput
-              style={[editStyles.input, editStyles.notesInput]}
-              value={notes}
-              onChangeText={setNotes}
-              multiline
-              placeholder="Optional notes..."
-              placeholderTextColor="#9ca3af"
-            />
-          </ScrollView>
-
-          <TouchableOpacity style={editStyles.saveBtn} onPress={handleSave} disabled={saving}>
-            {saving
-              ? <ActivityIndicator color="#fff" />
-              : <Text style={editStyles.saveBtnText}>Save Changes</Text>}
-          </TouchableOpacity>
-
-          {picker && Platform.OS !== 'web' && (
-            <DateTimePicker
-              value={
-                picker.target === 'date_only' ? entryDate
-                  : picker.target === 'start' ? startDate
-                  : (endDate ?? new Date())
-              }
-              mode={picker.target === 'date_only' ? 'date' : picker.mode}
-              display={Platform.OS === 'ios' ? 'inline' : 'default'}
-              onChange={onPickerChange}
-            />
-          )}
-        </View>
-      </KeyboardAvoidingView>
-    </Modal>
-  );
 }
 
 // ── Timeline chart ─────────────────────────────────────────────────────────
@@ -573,6 +84,7 @@ function EditLogModal({
 const TIME_LABEL_W = 38;
 const DATE_LABEL_H = 30;
 const CHART_H = 216;
+const CHART_H_EXPANDED = Math.round(Dimensions.get('window').height * 0.6);
 const HOUR_TICKS = [0, 6, 12, 18, 24];
 const BAR_PADDING = 2;
 const MIN_COL_W = 4;
@@ -650,6 +162,8 @@ function TimelineChart({
   const chartWrapRef = useRef<View>(null);
   const chartBodyRef = useRef<View>(null);
   const hideDelayRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [expanded, setExpanded] = useState(false);
+  const chartH = expanded ? CHART_H_EXPANDED : CHART_H;
   const [isPinching, setIsPinching] = useState(false);
   const [tooltip, setTooltip] = useState<TooltipState | null>(null);
   const [crosshairY, setCrosshairY] = useState<number | null>(null);
@@ -746,7 +260,7 @@ function TimelineChart({
       const rect = el.getBoundingClientRect();
       if (e.clientX < rect.left || e.clientX > rect.right) { setCrosshairY(null); return; }
       const y = e.clientY - rect.top;
-      setCrosshairY(y >= 0 && y <= CHART_H ? y : null);
+      setCrosshairY(y >= 0 && y <= chartH ? y : null);
     };
     document.addEventListener('mousemove', onMove);
     return () => document.removeEventListener('mousemove', onMove);
@@ -779,7 +293,7 @@ function TimelineChart({
     })
   ).current;
 
-  const svgH = CHART_H + DATE_LABEL_H;
+  const svgH = chartH + DATE_LABEL_H;
   const totalChartW = colWidth * numDays;
 
   // Build days oldest → newest
@@ -811,10 +325,10 @@ function TimelineChart({
     const daySet = new Set<string>();
     if (isFlipped) {
       // Flipped: use only the rows visible in the vertical scroll viewport
-      const maxScrollY = Math.max(0, numDays * FLIPPED_ROW_H - CHART_H);
+      const maxScrollY = Math.max(0, numDays * FLIPPED_ROW_H - chartH);
       const clampedY = Math.min(scrollYSnap, maxScrollY);
       const visStartRowIdx = Math.max(0, Math.floor(clampedY / FLIPPED_ROW_H));
-      const visEndRowIdx = Math.min(numDays, visStartRowIdx + Math.ceil(CHART_H / FLIPPED_ROW_H) + 1);
+      const visEndRowIdx = Math.min(numDays, visStartRowIdx + Math.ceil(chartH / FLIPPED_ROW_H) + 1);
       for (let i = visStartRowIdx; i < visEndRowIdx; i++) {
         const d = new Date(today);
         d.setDate(today.getDate() - (numDays - 1 - i));
@@ -896,14 +410,14 @@ function TimelineChart({
                 <Text style={styles.zoomBtnText}>−</Text>
               </TouchableOpacity>
               <TouchableOpacity style={[styles.zoomBtn, styles.zoomBtnToday]}
-                onPress={() => scrollRef.current?.scrollToEnd({ animated: true })}>
+                onPress={() => setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 50)}>
                 <Text style={[styles.zoomBtnText, styles.zoomBtnTodayText]}>Today</Text>
               </TouchableOpacity>
             </>
           )}
           {isFlipped && (
             <TouchableOpacity style={[styles.zoomBtn, styles.zoomBtnToday]}
-              onPress={() => scrollRef.current?.scrollToEnd({ animated: true })}>
+              onPress={() => setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 50)}>
               <Text style={[styles.zoomBtnText, styles.zoomBtnTodayText]}>Today</Text>
             </TouchableOpacity>
           )}
@@ -935,6 +449,12 @@ function TimelineChart({
           >
             <Ionicons name={isFlipped ? 'swap-horizontal' : 'swap-vertical'} size={13} color={isFlipped ? '#fff' : '#6366f1'} />
           </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.zoomBtn, styles.zoomBtnFlip, expanded && styles.zoomBtnFlipOn]}
+            onPress={() => setExpanded(e => !e)}
+          >
+            <Ionicons name={expanded ? 'contract-outline' : 'expand-outline'} size={13} color={expanded ? '#fff' : '#6366f1'} />
+          </TouchableOpacity>
         </View>
       </View>
 
@@ -961,7 +481,7 @@ function TimelineChart({
           </View>
 
           {/* Scrollable date rows — today at the bottom */}
-          <ScrollView ref={scrollRef} style={{ maxHeight: CHART_H }} showsVerticalScrollIndicator={false}
+          <ScrollView ref={scrollRef} style={{ maxHeight: chartH }} showsVerticalScrollIndicator={false}
             onScroll={e => setScrollYSnap(e.nativeEvent.contentOffset.y)}
             scrollEventThrottle={100}>
             {days.map((day, rowIdx) => {
@@ -1068,7 +588,7 @@ function TimelineChart({
           {/* Pinned time-of-day axis */}
           <Svg width={TIME_LABEL_W} height={svgH}>
             {HOUR_TICKS.map((h) => {
-              const y = (h / 24) * CHART_H;
+              const y = (h / 24) * chartH;
               const label = h === 0 ? '12am' : h === 12 ? '12pm' : h === 24 ? '' : `${h > 12 ? h - 12 : h}${h >= 12 ? 'pm' : 'am'}`;
               return (
                 <SvgText key={h} x={TIME_LABEL_W - 4} y={y + 4} fontSize={9} fill="#9ca3af" textAnchor="end">
@@ -1090,12 +610,12 @@ function TimelineChart({
           >
             <Svg width={totalChartW} height={svgH}>
               {days.map((day, colIdx) => (
-                <Rect key={day + '-bg'} x={colIdx * colWidth} y={0} width={colWidth} height={CHART_H}
+                <Rect key={day + '-bg'} x={colIdx * colWidth} y={0} width={colWidth} height={chartH}
                   fill={colIdx % 2 === 0 ? '#f9fafb' : '#f3f4f6'} />
               ))}
 
               {HOUR_TICKS.map((h) => {
-                const y = (h / 24) * CHART_H;
+                const y = (h / 24) * chartH;
                 return (
                   <Line key={h} x1={0} y1={y} x2={totalChartW} y2={y}
                     stroke="#d1d5db" strokeWidth={h === 0 ? 1 : 0.5}
@@ -1105,7 +625,7 @@ function TimelineChart({
 
               {/* Heatmap density overlay — rendered before bars so bars stay on top */}
               {hmapDensity && (() => {
-                const slotH = CHART_H / HMAP_SLOTS;
+                const slotH = chartH / HMAP_SLOTS;
                 return (
                   <G>
                     {Array.from(hmapDensity.values).map((d, i) => {
@@ -1142,10 +662,10 @@ function TimelineChart({
                   <G key={day}>
                     {showLabel && (
                       <>
-                        <SvgText x={colX + colWidth / 2} y={CHART_H + 12} fontSize={9} fill="#6b7280" textAnchor="middle">
+                        <SvgText x={colX + colWidth / 2} y={chartH + 12} fontSize={9} fill="#6b7280" textAnchor="middle">
                           {d.toLocaleDateString(undefined, { weekday: 'short' })}
                         </SvgText>
-                        <SvgText x={colX + colWidth / 2} y={CHART_H + 23} fontSize={8} fill="#9ca3af" textAnchor="middle">
+                        <SvgText x={colX + colWidth / 2} y={chartH + 23} fontSize={8} fill="#9ca3af" textAnchor="middle">
                           {d.toLocaleDateString(undefined, { month: 'numeric', day: 'numeric' })}
                         </SvgText>
                       </>
@@ -1158,7 +678,7 @@ function TimelineChart({
                       const startFrac = isContinuation
                         ? 0
                         : (start.getHours() * 60 + start.getMinutes()) / (24 * 60);
-                      const barY = startFrac * CHART_H;
+                      const barY = startFrac * chartH;
                       const color = colorMap.get(log.activity_type)?.[0] ?? '#6366f1';
                       const barX = colX + BAR_PADDING;
                       const isHovered = tooltip?.logs.some(l => l.id === log.id) ?? false;
@@ -1171,7 +691,7 @@ function TimelineChart({
                           const endFrac = endsToday
                             ? (end.getHours() * 60 + end.getMinutes()) / (24 * 60)
                             : 1.0;
-                          barH = Math.max((endFrac - startFrac) * CHART_H, 3);
+                          barH = Math.max((endFrac - startFrac) * chartH, 3);
                         }
                         const overlapping = entries.filter(other => timeOverlap(log, other, day));
                         setTooltip({ logs: overlapping.length > 0 ? overlapping : [log], barX, barY, barH });
@@ -1190,7 +710,7 @@ function TimelineChart({
                         const endFrac = endsToday
                           ? (end.getHours() * 60 + end.getMinutes()) / (24 * 60)
                           : 1.0;
-                        const barH = Math.max((endFrac - startFrac) * CHART_H, 3);
+                        const barH = Math.max((endFrac - startFrac) * chartH, 3);
                         return (
                           <G key={log.id + (isContinuation ? '-cont' : '')}>
                             <Rect
@@ -1210,7 +730,7 @@ function TimelineChart({
                           <G key={log.id}>
                             <Circle
                               cx={barX + barW / 2}
-                              cy={isTimeless ? CHART_H / 2 : barY}
+                              cy={isTimeless ? chartH / 2 : barY}
                               r={r}
                               fill={isTimeless ? 'none' : color}
                               stroke={isTimeless ? color : 'none'}
@@ -1227,8 +747,8 @@ function TimelineChart({
                 );
               })}
 
-              <Line x1={totalChartW} y1={0} x2={totalChartW} y2={CHART_H} stroke="#d1d5db" strokeWidth={1} />
-              <Line x1={0} y1={CHART_H} x2={totalChartW} y2={CHART_H} stroke="#d1d5db" strokeWidth={1} />
+              <Line x1={totalChartW} y1={0} x2={totalChartW} y2={chartH} stroke="#d1d5db" strokeWidth={1} />
+              <Line x1={0} y1={chartH} x2={totalChartW} y2={chartH} stroke="#d1d5db" strokeWidth={1} />
 
               {/* Tooltip — native only; web uses a View overlay below */}
               {tooltip && Platform.OS !== 'web' && (() => {
@@ -1284,7 +804,7 @@ function TimelineChart({
           </ScrollView>
         </View>
         {crosshairY !== null && (
-          <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, right: 0, height: CHART_H }}>
+          <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, right: 0, height: chartH }}>
             <View style={{ position: 'absolute', top: crosshairY - 0.5, left: 0, right: 0, height: 1, backgroundColor: 'rgba(99,102,241,0.45)' }} />
             <View style={{
               position: 'absolute',
@@ -1297,7 +817,7 @@ function TimelineChart({
             }}>
               <Text style={{ fontSize: 9, color: '#fff', fontWeight: '600' }}>
                 {(() => {
-                  const totalMins = Math.round((crosshairY / CHART_H) * 24 * 60);
+                  const totalMins = Math.round((crosshairY / chartH) * 24 * 60);
                   const h = Math.min(23, Math.floor(totalMins / 60));
                   const m = totalMins % 60;
                   const period = h >= 12 ? 'pm' : 'am';
@@ -1451,7 +971,7 @@ function ActivityChart({
   const byDate = new Map<string, number>();
   if (useCountMode) {
     logs
-      .filter(l => l.activity_type === type && l.extra_data?.zero !== true && l.extra_data?.untimed !== true)
+      .filter(l => l.activity_type === type && l.extra_data?.quantity !== 0)
       .forEach(l => {
         const key = dayKey(new Date(l.started_at));
         byDate.set(key, (byDate.get(key) ?? 0) + 1);
@@ -1462,8 +982,7 @@ function ActivityChart({
         if (l.activity_type !== type) return false;
         if (hasDuration) return l.extra_data?.zero !== true && l.extra_data?.untimed !== true;
         if (hasQuantity) return typeof l.extra_data?.quantity === 'number';
-        // pure occurrence count — exclude zero/untimed entries
-        if (l.extra_data?.zero === true || l.extra_data?.untimed === true) return false;
+        if (l.extra_data?.quantity === 0) return false;
         return true;
       })
       .forEach((l) => {
@@ -1910,7 +1429,7 @@ function LogItem({
             <View style={styles.tagsRow}>
               {(log.extra_data.tags as string[]).map(tag => (
                 <View key={tag} style={styles.tagPill}>
-                  <Text style={styles.tagPillText}>#{tag}</Text>
+                  <Text style={styles.tagPillText}>{tag}</Text>
                 </View>
               ))}
             </View>
@@ -2029,6 +1548,27 @@ const SORT_OPTIONS: DropdownOpt[] = [
 ];
 
 export default function DashboardScreen() {
+  const [viewingUserId, setViewingUserId] = useState<string | null>(null);
+  const [viewingUserName, setViewingUserName] = useState<string | null>(null);
+  const viewingUserIdRef = useRef<string | null>(null);
+  const [sharedWithMe, setSharedWithMe] = useState<Share[]>([]);
+  const [showSharePanel, setShowSharePanel] = useState(false);
+
+  const loadSharedWithMe = async () => {
+    try {
+      const data = await getAcceptedSharedWithMe();
+      setSharedWithMe(data);
+    } catch {}
+  };
+
+  useEffect(() => { loadSharedWithMe(); }, []);
+
+  const switchUser = (userId: string | null, userName: string | null) => {
+    viewingUserIdRef.current = userId;
+    setViewingUserId(userId);
+    setViewingUserName(userName);
+  };
+
   const [logs, setLogs] = useState<ActivityLog[]>([]);
   const [loading, setLoading] = useState(true);
   const [visibleTypes, setVisibleTypes] = useState<Set<string>>(new Set());
@@ -2082,7 +1622,7 @@ export default function DashboardScreen() {
   const fetchLogs = async () => {
     setLoading(true);
     try {
-      const data = await getLogs(undefined, 500);
+      const data = await getLogs(undefined, 500, viewingUserIdRef.current ?? undefined);
       setLogs(data);
       setLogPage(0);
       // Show all types by default (preserve any manual toggles by only adding new ones)
@@ -2109,6 +1649,8 @@ export default function DashboardScreen() {
   };
 
   useFocusEffect(useCallback(() => { fetchLogs(); }, []));
+
+  useEffect(() => { fetchLogs(); }, [viewingUserId]);
 
   // Derive unique types in the order they first appear (API returns desc, so reverse for order)
   const uniqueTypes: string[] = [];
@@ -2172,7 +1714,50 @@ export default function DashboardScreen() {
         renderItem={null}
         ListHeaderComponent={
           <>
-            <Text style={styles.heading}>Dashboard</Text>
+            <View style={styles.headingRow}>
+              <Text style={styles.heading}>
+                {viewingUserName ? `${viewingUserName}'s Dashboard` : 'Dashboard'}
+              </Text>
+              <TouchableOpacity onPress={() => setShowSharePanel(true)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                <Ionicons name="people-outline" size={22} color="#6366f1" />
+              </TouchableOpacity>
+            </View>
+
+            {/* Dashboard switcher — own + accepted shared dashboards */}
+            {sharedWithMe.length > 0 && (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.switcherRow} contentContainerStyle={styles.switcherContent}>
+                <TouchableOpacity
+                  style={[styles.switcherPill, !viewingUserId && styles.switcherPillActive]}
+                  onPress={() => switchUser(null, null)}
+                >
+                  <Text style={[styles.switcherPillText, !viewingUserId && styles.switcherPillTextActive]}>Mine</Text>
+                </TouchableOpacity>
+                {sharedWithMe.map((s) => (
+                  <TouchableOpacity
+                    key={s.id}
+                    style={[styles.switcherPill, viewingUserId === s.user.id && styles.switcherPillActive]}
+                    onPress={() => switchUser(s.user.id, s.user.name)}
+                  >
+                    <Text style={[styles.switcherPillText, viewingUserId === s.user.id && styles.switcherPillTextActive]}>
+                      {s.user.name || s.user.email}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            )}
+
+            {viewingUserId && (
+              <View style={styles.readOnlyBanner}>
+                <Ionicons name="eye-outline" size={13} color="#6b7280" />
+                <Text style={styles.readOnlyText}>Read-only view</Text>
+              </View>
+            )}
+
+            <SharePanel
+              visible={showSharePanel}
+              onClose={() => setShowSharePanel(false)}
+              onSharesChanged={loadSharedWithMe}
+            />
 
             <TypeToggles
               types={typeOrder.filter(t => uniqueTypes.includes(t))}
@@ -2342,7 +1927,23 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f9fafb' },
   content: { padding: 16, paddingBottom: 32 },
   centered: { flex: 1 },
-  heading: { fontSize: 22, fontWeight: '700', marginBottom: 12, color: '#111827' },
+  heading: { fontSize: 22, fontWeight: '700', color: '#111827' },
+  headingRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 },
+  switcherRow: { marginBottom: 12 },
+  switcherContent: { gap: 8, paddingRight: 4 },
+  switcherPill: {
+    paddingVertical: 6, paddingHorizontal: 14, borderRadius: 20,
+    borderWidth: 1, borderColor: '#d1d5db', backgroundColor: '#f9fafb',
+  },
+  switcherPillActive: { backgroundColor: '#6366f1', borderColor: '#6366f1' },
+  switcherPillText: { fontSize: 13, fontWeight: '600', color: '#374151' },
+  switcherPillTextActive: { color: '#fff' },
+  readOnlyBanner: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    backgroundColor: '#f3f4f6', borderRadius: 6,
+    paddingVertical: 5, paddingHorizontal: 10, marginBottom: 12, alignSelf: 'flex-start',
+  },
+  readOnlyText: { fontSize: 12, color: '#6b7280', fontWeight: '500' },
   sectionLabel: {
     fontSize: 13,
     fontWeight: '600',
@@ -2508,58 +2109,3 @@ const styles = StyleSheet.create({
   pageLabel: { fontSize: 12, color: '#6b7280', fontWeight: '500' },
 });
 
-const editStyles = StyleSheet.create({
-  overlay: {
-    flex: 1, backgroundColor: 'rgba(0,0,0,0.4)',
-    justifyContent: 'flex-end',
-  },
-  sheet: {
-    backgroundColor: '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20,
-    padding: 20, paddingBottom: 36, maxHeight: '85%',
-  },
-  header: {
-    flexDirection: 'row', justifyContent: 'space-between',
-    alignItems: 'center', marginBottom: 16,
-  },
-  title: { fontSize: 18, fontWeight: '700', color: '#111827' },
-  label: { fontSize: 13, fontWeight: '600', color: '#374151', marginBottom: 6, marginTop: 14 },
-  input: {
-    backgroundColor: '#f9fafb', borderRadius: 8, borderWidth: 1,
-    borderColor: '#d1d5db', padding: 12, fontSize: 15, color: '#111827',
-  },
-  notesInput: { height: 80, textAlignVertical: 'top' },
-  dateBtn: {
-    backgroundColor: '#f9fafb', borderRadius: 8, borderWidth: 1,
-    borderColor: '#d1d5db', padding: 12,
-  },
-  dateBtnText: { fontSize: 15, color: '#111827' },
-  endRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  removeEndBtn: { paddingLeft: 4 },
-  quantityRow: { flexDirection: 'row', alignItems: 'stretch', gap: 8 },
-  addEndText: { fontSize: 14, color: '#6366f1', fontWeight: '600', paddingVertical: 10 },
-  segmentedRow: {
-    flexDirection: 'row', marginTop: 14, marginBottom: 2,
-    borderRadius: 8, borderWidth: 1, borderColor: '#d1d5db', overflow: 'hidden',
-  },
-  segBtn: { flex: 1, paddingVertical: 9, alignItems: 'center', backgroundColor: '#f9fafb' },
-  segBtnOn: { backgroundColor: '#6366f1' },
-  segBtnText: { fontSize: 14, fontWeight: '600', color: '#374151' },
-  segBtnTextOn: { color: '#fff' },
-  saveBtn: {
-    backgroundColor: '#6366f1', padding: 16, borderRadius: 10,
-    alignItems: 'center', marginTop: 20,
-  },
-  saveBtnText: { color: '#fff', fontSize: 16, fontWeight: '700' },
-  tagsContainer: {
-    flexDirection: 'row', flexWrap: 'wrap', gap: 6,
-    backgroundColor: '#f9fafb', borderRadius: 8, borderWidth: 1, borderColor: '#d1d5db',
-    padding: 8, minHeight: 44, alignItems: 'center',
-  },
-  tagChip: {
-    flexDirection: 'row', alignItems: 'center', gap: 4,
-    backgroundColor: '#eef2ff', borderRadius: 20,
-    paddingHorizontal: 10, paddingVertical: 4,
-  },
-  tagChipText: { fontSize: 13, color: '#4f46e5', fontWeight: '500' },
-  tagInput: { fontSize: 14, color: '#111827', flex: 1, minWidth: 80, height: 32, paddingVertical: 4 },
-});

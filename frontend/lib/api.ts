@@ -35,8 +35,8 @@ export interface CreateActivityLog {
   extra_data?: Record<string, unknown>;
 }
 
-export const getLogs = (activity_type?: string, limit = 100): Promise<ActivityLog[]> =>
-  api.get('/logs', { params: { activity_type, limit } }).then((r) => r.data);
+export const getLogs = (activity_type?: string, limit = 100, owner_id?: string): Promise<ActivityLog[]> =>
+  api.get('/logs', { params: { activity_type, limit, owner_id } }).then((r) => r.data);
 
 export const createLog = (log: CreateActivityLog): Promise<ActivityLog> =>
   api.post('/logs', log).then((r) => r.data);
@@ -122,8 +122,8 @@ export interface Category {
   log_count: number;
 }
 
-export const getCategories = (): Promise<Category[]> =>
-  api.get('/categories').then((r) => r.data);
+export const getCategories = (owner_id?: string): Promise<Category[]> =>
+  api.get('/categories', { params: { owner_id } }).then((r) => r.data);
 
 export const hideCategory = (name: string): Promise<void> =>
   api.delete(`/categories/${encodeURIComponent(name)}`).then((r) => r.data);
@@ -183,3 +183,39 @@ export const updateNote = (id: string, body: {
 
 export const deleteNote = (id: string): Promise<void> =>
   api.delete(`/notes/${id}`).then((r) => r.data);
+
+// ── Shares ────────────────────────────────────────────────────────────────
+
+export interface ShareUser {
+  id: string;
+  email: string;
+  name: string;
+}
+
+export interface Share {
+  id: string;
+  status: 'pending' | 'accepted' | 'declined';
+  user: ShareUser;
+  created_at: string;
+}
+
+export const sendShareInvite = (viewer_email: string): Promise<Share> =>
+  api.post('/shares', { viewer_email }).then((r) => r.data);
+
+export const getSentShares = (): Promise<Share[]> =>
+  api.get('/shares/sent').then((r) => r.data);
+
+export const getReceivedShares = (): Promise<Share[]> =>
+  api.get('/shares/received').then((r) => r.data);
+
+export const getAcceptedSharedWithMe = (): Promise<Share[]> =>
+  api.get('/shares/accepted').then((r) => r.data);
+
+export const acceptShare = (share_id: string): Promise<Share> =>
+  api.post(`/shares/${share_id}/accept`).then((r) => r.data);
+
+export const declineShare = (share_id: string): Promise<void> =>
+  api.post(`/shares/${share_id}/decline`).then((r) => r.data);
+
+export const revokeShare = (share_id: string): Promise<void> =>
+  api.delete(`/shares/${share_id}`).then((r) => r.data);

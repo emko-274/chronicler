@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, DateTime, Integer, Text, JSON, ForeignKey
+from sqlalchemy import Column, String, DateTime, Integer, Text, JSON, ForeignKey, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from database import Base
 import uuid
@@ -43,6 +43,19 @@ class ActivityLog(Base):
     notes = Column(Text, nullable=True)
     extra_data = Column(JSON, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class Share(Base):
+    __tablename__ = "shares"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    owner_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
+    viewer_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
+    status = Column(String(20), nullable=False, default='pending')  # pending | accepted | declined
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (UniqueConstraint('owner_id', 'viewer_id', name='uq_share_pair'),)
 
 
 class Note(Base):

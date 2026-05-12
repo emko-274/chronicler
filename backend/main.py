@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from database import engine, Base
-from routes import logs, analyze, categories, notes, auth
+from routes import logs, analyze, categories, notes, auth, shares
 
 Base.metadata.create_all(bind=engine)
 
@@ -16,6 +16,7 @@ app.add_middleware(
 )
 
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
+app.include_router(shares.router, prefix="/shares", tags=["shares"])
 app.include_router(logs.router, prefix="/logs", tags=["logs"])
 app.include_router(analyze.router, prefix="/analyze", tags=["analyze"])
 app.include_router(categories.router, prefix="/categories", tags=["categories"])

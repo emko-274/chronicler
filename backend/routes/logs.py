@@ -4,7 +4,7 @@ from pydantic import BaseModel
 from datetime import datetime
 from typing import Optional
 from database import get_db
-from models import ActivityLog, HiddenCategory, User
+from models import ActivityLog, HiddenCategory, Share, User
 from auth import get_current_user
 
 router = APIRouter()
@@ -64,14 +64,27 @@ def get_logs(
     activity_type: Optional[str] = None,
     limit: int = 100,
     include_hidden: bool = False,
+    owner_id: Optional[str] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    query = db.query(ActivityLog).filter(ActivityLog.user_id == current_user.id)
+    if owner_id and owner_id != str(current_user.id):
+        share = db.query(Share).filter(
+            Share.owner_id == owner_id,
+            Share.viewer_id == current_user.id,
+            Share.status == 'accepted',
+        ).first()
+        if not share:
+            raise HTTPException(status_code=403, detail="No access to this user's data")
+        target_id = owner_id
+    else:
+        target_id = str(current_user.id)
+
+    query = db.query(ActivityLog).filter(ActivityLog.user_id == target_id)
     if activity_type:
         query = query.filter(ActivityLog.activity_type == activity_type)
     if not include_hidden:
-        hidden = {h.name for h in db.query(HiddenCategory).filter(HiddenCategory.user_id == current_user.id).all()}
+        hidden = {h.name for h in db.query(HiddenCategory).filter(HiddenCategory.user_id == target_id).all()}
         if hidden:
             query = query.filter(ActivityLog.activity_type.notin_(hidden))
     results = query.order_by(ActivityLog.started_at.desc()).limit(limit).all()

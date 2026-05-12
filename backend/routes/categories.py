@@ -1,9 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
-from typing import List
+from typing import List, Optional
 from database import get_db
-from models import ActivityLog, HiddenCategory, User
+from models import ActivityLog, HiddenCategory, Share, User
 from auth import get_current_user
 
 router = APIRouter()
@@ -23,20 +23,33 @@ class RenameRequest(BaseModel):
 
 @router.get("/", response_model=List[CategoryResponse])
 def get_categories(
+    owner_id: Optional[str] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    rows = db.query(ActivityLog.activity_type).filter(ActivityLog.user_id == current_user.id).distinct().all()
+    if owner_id and owner_id != str(current_user.id):
+        share = db.query(Share).filter(
+            Share.owner_id == owner_id,
+            Share.viewer_id == current_user.id,
+            Share.status == 'accepted',
+        ).first()
+        if not share:
+            raise HTTPException(status_code=403, detail="No access to this user's data")
+        target_id = owner_id
+    else:
+        target_id = str(current_user.id)
+
+    rows = db.query(ActivityLog.activity_type).filter(ActivityLog.user_id == target_id).distinct().all()
     from_logs = {r[0] for r in rows}
 
     hidden = {
-        h.name for h in db.query(HiddenCategory).filter(HiddenCategory.user_id == current_user.id).all()
+        h.name for h in db.query(HiddenCategory).filter(HiddenCategory.user_id == target_id).all()
     }
 
     all_names = sorted(set(BUILTIN_TYPES) | from_logs | hidden)
 
     counts = {}
-    for row in db.query(ActivityLog.activity_type).filter(ActivityLog.user_id == current_user.id).all():
+    for row in db.query(ActivityLog.activity_type).filter(ActivityLog.user_id == target_id).all():
         counts[row[0]] = counts.get(row[0], 0) + 1
 
     return [

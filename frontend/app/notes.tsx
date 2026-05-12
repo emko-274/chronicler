@@ -8,8 +8,14 @@ import {
   getNotes, getDailyLogs, createNote, updateNote, deleteNote, getLogs,
   Note, LinkedLog,
 } from '@/lib/api';
+import EditLogModal, { EditableLog } from '@/components/EditLogModal';
 
-const TODAY = new Date().toISOString().slice(0, 10);
+function localDateStr(d: Date = new Date()): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+const TODAY = localDateStr();
 
 function formatDate(d: string) {
   const [year, month, day] = d.split('-');
@@ -25,7 +31,7 @@ function dateLabel(d: string) {
 function shiftDate(d: string, days: number) {
   const date = new Date(d + 'T12:00:00');
   date.setDate(date.getDate() + days);
-  return date.toISOString().slice(0, 10);
+  return localDateStr(date);
 }
 
 function timeLabel(iso: string) {
@@ -154,15 +160,18 @@ const fmt = StyleSheet.create({
 
 // ── Log note card ─────────────────────────────────────────────────────────────
 
-function LogNoteCard({ log }: { log: LinkedLog }) {
+function LogNoteCard({ log, onEdit }: { log: LinkedLog; onEdit: (log: EditableLog) => void }) {
   const [expanded, setExpanded] = useState(false);
   const cardTags = Array.isArray(log.extra_data?.tags) ? (log.extra_data!.tags as string[]) : [];
   return (
     <TouchableOpacity style={s.logCard} onPress={() => setExpanded(e => !e)} activeOpacity={0.8}>
       <View style={s.logCardRow}>
         <Text style={s.logCardType}>{log.activity_type}</Text>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
           <Text style={s.logCardMeta}>{timeLabel(log.started_at)}</Text>
+          <TouchableOpacity onPress={(e) => { e.stopPropagation?.(); onEdit(log); }} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
+            <Ionicons name="pencil-outline" size={13} color="#9ca3af" />
+          </TouchableOpacity>
           <Ionicons name={expanded ? 'chevron-up' : 'chevron-down'} size={13} color="#9ca3af" />
         </View>
       </View>
@@ -170,7 +179,7 @@ function LogNoteCard({ log }: { log: LinkedLog }) {
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 5 }}>
           {cardTags.map(tag => (
             <View key={tag} style={s.logTagChip}>
-              <Text style={s.logTagText}>#{tag}</Text>
+              <Text style={s.logTagText}>{tag}</Text>
             </View>
           ))}
         </View>
@@ -221,6 +230,7 @@ function DayDetail({ date, onDateChange, onBack, onNoteChanged }: {
   const [dayLogs, setDayLogs] = useState<LinkedLog[]>([]);
   const [saving, setSaving] = useState(false);
   const [editing, setEditing] = useState(false);
+  const [editingLog, setEditingLog] = useState<EditableLog | null>(null);
   const noteRef = useRef<Note | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const selRef = useRef({ start: 0, end: 0 });
@@ -323,7 +333,7 @@ function DayDetail({ date, onDateChange, onBack, onNoteChanged }: {
             </TouchableOpacity>
             {logsVisible && (
               <>
-                {logsWithNotes.map(log => <LogNoteCard key={log.id} log={log} />)}
+                {logsWithNotes.map(log => <LogNoteCard key={log.id} log={log} onEdit={setEditingLog} />)}
                 {otherLogs.length > 0 && (
                   <View style={[s.chips, { marginTop: logsWithNotes.length > 0 ? 8 : 0 }]}>
                     {otherLogs.map(log => (
@@ -383,6 +393,11 @@ function DayDetail({ date, onDateChange, onBack, onNoteChanged }: {
         )}
         <View style={{ height: 40 }} />
       </ScrollView>
+      <EditLogModal
+        log={editingLog}
+        onClose={() => setEditingLog(null)}
+        onSave={() => { setEditingLog(null); load(date); }}
+      />
     </View>
   );
 }
@@ -644,10 +659,10 @@ export default function NotesScreen() {
       const logNotesByDay = new Map<string, number>();
       logs.forEach(l => {
         if (!l.notes) return;
-        const d = l.started_at.slice(0, 10);
+        const d = localDateStr(new Date(l.started_at));
         logNotesByDay.set(d, (logNotesByDay.get(d) ?? 0) + 1);
       });
-      const logDays = new Set(logs.map(l => l.started_at.slice(0, 10)));
+      const logDays = new Set(logs.map(l => localDateStr(new Date(l.started_at))));
       const notesByDay = new Map<string, Note>();
       notes.forEach(n => { if (n.date) notesByDay.set(n.date, n); });
       const all = [...new Set([...logDays, ...notesByDay.keys(), TODAY, selected])].sort().reverse();

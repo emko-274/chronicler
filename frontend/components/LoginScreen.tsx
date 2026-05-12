@@ -15,7 +15,7 @@ interface Props {
 }
 
 export default function LoginScreen({ onSignIn }: Props) {
-  const redirectUri = makeRedirectUri({ useProxy: true });
+  const redirectUri = makeRedirectUri();
 
   const [request, response, promptAsync] = Google.useAuthRequest({
     clientId: process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID,
