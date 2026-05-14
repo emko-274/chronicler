@@ -1112,7 +1112,20 @@ function ActivityChart({
       .forEach((l) => misalignedDays.add(dayKey(new Date(l.started_at))));
   }
 
-  if (byDate.size === 0 && misalignedDays.size === 0) {
+  // Days with explicitly zero-valued entries (zero/untimed for duration types, quantity=0 for quantity types)
+  const zeroDays = new Set<string>();
+  if (!useCountMode) {
+    logs
+      .filter((l) => {
+        if (l.activity_type !== type) return false;
+        if (hasDuration) return l.extra_data?.zero === true || l.extra_data?.untimed === true;
+        if (hasQuantity) return l.extra_data?.quantity === 0;
+        return false;
+      })
+      .forEach((l) => zeroDays.add(dayKey(new Date(l.started_at))));
+  }
+
+  if (byDate.size === 0 && misalignedDays.size === 0 && zeroDays.size === 0) {
     return (
       <View style={styles.chartPanelItem}>
         <TouchableOpacity style={styles.chartHeader} onPress={onToggleCollapsed} activeOpacity={0.7}>
@@ -1351,6 +1364,20 @@ function ActivityChart({
                 <Circle key={`mis-${key}`}
                   cx={xOf(idx)} cy={baseY - dotR} r={dotR}
                   fill="none" stroke="rgba(255,255,255,0.6)" strokeWidth={1.5}
+                />
+              );
+            })}
+
+            {/* Filled circles for explicitly zero-valued entries */}
+            {[...zeroDays].map((key) => {
+              const idx = days.findIndex(d => d.key === key);
+              if (idx < 0) return null;
+              // Skip if day already has a non-zero value (regular dot handles it)
+              if (days[idx].value !== null && days[idx].value! > 0) return null;
+              return (
+                <Circle key={`zero-${key}`}
+                  cx={xOf(idx)} cy={baseY - dotR} r={dotR}
+                  fill="rgba(255,255,255,0.85)" stroke="#fff" strokeWidth={1.5}
                 />
               );
             })}

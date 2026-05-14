@@ -7,7 +7,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import NotesScreen from './notes';
 import LoginScreen from '../components/LoginScreen';
-import { getStoredToken, storeToken, clearToken, UserInfo } from '../lib/auth';
+import { getStoredToken, storeToken, clearToken, storeUser, getStoredUser, UserInfo } from '../lib/auth';
 import { setApiToken } from '../lib/api';
 
 type IoniconName = React.ComponentProps<typeof Ionicons>['name'];
@@ -34,14 +34,15 @@ export default function Layout() {
   const [user, setUser] = useState<UserInfo | null>(null);
 
   useEffect(() => {
-    getStoredToken().then((token) => {
+    Promise.all([getStoredToken(), getStoredUser()]).then(([token, storedUser]) => {
       if (token) setApiToken(token);
+      if (token && storedUser) setUser(storedUser);
       setAuthReady(true);
     });
   }, []);
 
   async function handleSignIn(token: string, userInfo: UserInfo) {
-    await storeToken(token);
+    await Promise.all([storeToken(token), storeUser(userInfo)]);
     setApiToken(token);
     setUser(userInfo);
   }
