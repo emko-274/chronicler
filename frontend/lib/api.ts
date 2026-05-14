@@ -119,6 +119,7 @@ export const runRegression = (body: {
 export interface Category {
   name: string;
   is_hidden: boolean;
+  is_private: boolean;
   log_count: number;
 }
 
@@ -133,6 +134,12 @@ export const deleteCategoryData = (name: string): Promise<{ deleted: number }> =
 
 export const restoreCategory = (name: string): Promise<void> =>
   api.post(`/categories/${encodeURIComponent(name)}/restore`).then((r) => r.data);
+
+export const markPrivate = (name: string): Promise<void> =>
+  api.post(`/categories/${encodeURIComponent(name)}/private`).then((r) => r.data);
+
+export const unmarkPrivate = (name: string): Promise<void> =>
+  api.delete(`/categories/${encodeURIComponent(name)}/private`).then((r) => r.data);
 
 export const renameCategory = (name: string, newName: string): Promise<{ renamed: string }> =>
   api.post(`/categories/${encodeURIComponent(name)}/rename`, { new_name: newName }).then((r) => r.data);
@@ -151,7 +158,6 @@ export interface Note {
   id: string;
   note_type: 'general' | 'daily';
   date: string | null;
-  title: string | null;
   content: string;
   linked_log_ids: string[];
   linked_logs: LinkedLog[];
@@ -168,14 +174,12 @@ export const getDailyLogs = (date: string): Promise<LinkedLog[]> =>
 export const createNote = (body: {
   note_type: string;
   date?: string;
-  title?: string | null;
   content?: string;
   linked_log_ids?: string[];
 }): Promise<Note> =>
   api.post('/notes', body).then((r) => r.data);
 
 export const updateNote = (id: string, body: {
-  title?: string | null;
   content?: string;
   linked_log_ids?: string[];
 }): Promise<Note> =>

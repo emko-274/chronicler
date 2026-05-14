@@ -225,7 +225,6 @@ function DayDetail({ date, onDateChange, onBack, onNoteChanged }: {
   onBack?: () => void;
   onNoteChanged?: () => void;
 }) {
-  const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
   const [dayLogs, setDayLogs] = useState<LinkedLog[]>([]);
   const [saving, setSaving] = useState(false);
@@ -245,26 +244,24 @@ function DayDetail({ date, onDateChange, onBack, onNoteChanged }: {
     ]);
     const n = notes[0] ?? null;
     noteRef.current = n;
-    setTitle(n?.title ?? '');
     setContent(n?.content ?? '');
     setDayLogs(logs);
   }
 
-  const scheduleSave = useCallback((t: string, c: string) => {
+  const scheduleSave = useCallback((c: string) => {
     if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => persist(t, c), 1000);
+    saveTimer.current = setTimeout(() => persist(c), 1000);
   }, [date]);
 
-  async function persist(t: string, c: string) {
-    if (!t.trim() && !c.trim()) return;
+  async function persist(c: string) {
+    if (!c.trim()) return;
     setSaving(true);
     try {
-      const payload = { title: t.trim() || null, content: c };
       if (noteRef.current) {
-        const updated = await updateNote(noteRef.current.id, payload);
+        const updated = await updateNote(noteRef.current.id, { content: c });
         noteRef.current = updated;
       } else {
-        const created = await createNote({ note_type: 'daily', date, ...payload });
+        const created = await createNote({ note_type: 'daily', date, content: c });
         noteRef.current = created;
       }
       onNoteChanged?.();
@@ -275,7 +272,7 @@ function DayDetail({ date, onDateChange, onBack, onNoteChanged }: {
     const lineStart = content.lastIndexOf('\n', selRef.current.start - 1) + 1;
     const next = content.slice(0, lineStart) + prefix + content.slice(lineStart);
     setContent(next);
-    scheduleSave(title, next);
+    scheduleSave(next);
     inputRef.current?.focus();
   }
 
@@ -283,13 +280,13 @@ function DayDetail({ date, onDateChange, onBack, onNoteChanged }: {
     const { start, end } = selRef.current;
     const next = content.slice(0, start) + before + content.slice(start, end) + after + content.slice(end);
     setContent(next);
-    scheduleSave(title, next);
+    scheduleSave(next);
     inputRef.current?.focus();
   }
 
   const logsWithNotes = dayLogs;
   const otherLogs: typeof dayLogs = [];
-  const hasNote = title.trim() || content.trim();
+  const hasNote = !!content.trim();
   const [logsVisible, setLogsVisible] = useState(false);
 
   return (
@@ -312,7 +309,7 @@ function DayDetail({ date, onDateChange, onBack, onNoteChanged }: {
         {saving && <ActivityIndicator size="small" color="#6366f1" style={{ marginRight: 4 }} />}
         <TouchableOpacity
           style={s.modeBtn}
-          onPress={() => { if (!editing) { setEditing(true); } else { if (saveTimer.current) { clearTimeout(saveTimer.current); persist(title, content); } setEditing(false); } }}
+          onPress={() => { if (!editing) { setEditing(true); } else { if (saveTimer.current) { clearTimeout(saveTimer.current); persist(content); } setEditing(false); } }}
         >
           <Ionicons name={editing ? 'checkmark' : 'pencil-outline'} size={15} color="#6366f1" />
           <Text style={s.modeBtnText}>{editing ? 'Done' : 'Edit'}</Text>
@@ -352,24 +349,17 @@ function DayDetail({ date, onDateChange, onBack, onNoteChanged }: {
         {/* Note */}
         <View style={s.section}>
           {(logsWithNotes.length > 0 || otherLogs.length > 0) && (
-            <Text style={s.sectionLabel}>Note</Text>
+            <Text style={s.sectionLabel}>Notes</Text>
           )}
           {editing ? (
             <>
-              <TextInput
-                style={s.titleInput}
-                placeholder="Title (optional)"
-                placeholderTextColor="#9ca3af"
-                value={title}
-                onChangeText={v => { setTitle(v); scheduleSave(v, content); }}
-              />
               <TextInput
                 ref={inputRef}
                 style={s.contentInput}
                 placeholder={'Write your note…\n\nFormatting: # Heading  - Bullet  **Bold**  *Italic*'}
                 placeholderTextColor="#c4c9d4"
                 value={content}
-                onChangeText={v => { setContent(v); scheduleSave(title, v); }}
+                onChangeText={v => { setContent(v); scheduleSave(v); }}
                 multiline
                 textAlignVertical="top"
                 onSelectionChange={e => { selRef.current = e.nativeEvent.selection; }}
@@ -377,7 +367,6 @@ function DayDetail({ date, onDateChange, onBack, onNoteChanged }: {
             </>
           ) : hasNote ? (
             <>
-              {title.trim() ? <Text style={s.noteViewTitle}>{title}</Text> : null}
               <MarkdownView content={content} />
             </>
           ) : (
@@ -464,7 +453,6 @@ function DayList({ days, selected, onSelect, loading }: {
 function GeneralTab() {
   const [notes, setNotes] = useState<Note[]>([]);
   const [editing, setEditing] = useState(false);
-  const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
   const [saving, setSaving] = useState(false);
   const noteRef = useRef<Note | null>(null);
@@ -481,27 +469,26 @@ function GeneralTab() {
 
   function openNew() {
     noteRef.current = null;
-    setTitle(''); setContent('');
+    setContent('');
     setEditing(true);
   }
 
   function openEdit(note: Note) {
     noteRef.current = note;
-    setTitle(note.title ?? '');
     setContent(note.content);
     setEditing(true);
   }
 
-  const scheduleSave = useCallback((t: string, c: string) => {
+  const scheduleSave = useCallback((c: string) => {
     if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => persist(t, c), 1000);
+    saveTimer.current = setTimeout(() => persist(c), 1000);
   }, []);
 
-  async function persist(t: string, c: string) {
-    if (!t.trim() && !c.trim()) return;
+  async function persist(c: string) {
+    if (!c.trim()) return;
     setSaving(true);
     try {
-      const payload = { title: t.trim() || null, content: c };
+      const payload = { content: c };
       if (noteRef.current) {
         noteRef.current = await updateNote(noteRef.current.id, payload);
       } else {
@@ -512,7 +499,7 @@ function GeneralTab() {
 
   async function closeEditor() {
     if (saveTimer.current) clearTimeout(saveTimer.current);
-    await persist(title, content);
+    await persist(content);
     setEditing(false);
     loadNotes();
   }
@@ -520,14 +507,14 @@ function GeneralTab() {
   function handleLinePrefix(prefix: string) {
     const lineStart = content.lastIndexOf('\n', selRef.current.start - 1) + 1;
     const next = content.slice(0, lineStart) + prefix + content.slice(lineStart);
-    setContent(next); scheduleSave(title, next);
+    setContent(next); scheduleSave(next);
     inputRef.current?.focus();
   }
 
   function handleWrap(before: string, after: string) {
     const { start, end } = selRef.current;
     const next = content.slice(0, start) + before + content.slice(start, end) + after + content.slice(end);
-    setContent(next); scheduleSave(title, next);
+    setContent(next); scheduleSave(next);
     inputRef.current?.focus();
   }
 
@@ -550,7 +537,7 @@ function GeneralTab() {
           <TouchableOpacity onPress={closeEditor} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
             <Ionicons name="arrow-back" size={20} color="#374151" />
           </TouchableOpacity>
-          <Text style={s.detailTitle}>{noteRef.current ? (title || 'Untitled') : 'New note'}</Text>
+          <Text style={s.detailTitle}>{noteRef.current ? (content.split('\n')[0].replace(/^#+\s/, '') || 'Untitled') : 'New note'}</Text>
           <View style={{ flex: 1 }} />
           {saving && <ActivityIndicator size="small" color="#6366f1" style={{ marginRight: 4 }} />}
           <TouchableOpacity style={s.modeBtn} onPress={closeEditor}>
@@ -561,19 +548,12 @@ function GeneralTab() {
         <FormattingBar onLinePrefix={handleLinePrefix} onWrap={handleWrap} />
         <ScrollView style={s.detailScroll} keyboardShouldPersistTaps="handled">
           <TextInput
-            style={s.titleInput}
-            placeholder="Title (optional)"
-            placeholderTextColor="#9ca3af"
-            value={title}
-            onChangeText={v => { setTitle(v); scheduleSave(v, content); }}
-          />
-          <TextInput
             ref={inputRef}
             style={s.contentInput}
             placeholder={'Write your note…\n\nFormatting: # Heading  - Bullet  **Bold**  *Italic*'}
             placeholderTextColor="#c4c9d4"
             value={content}
-            onChangeText={v => { setContent(v); scheduleSave(title, v); }}
+            onChangeText={v => { setContent(v); scheduleSave(v); }}
             multiline
             textAlignVertical="top"
             onSelectionChange={e => { selRef.current = e.nativeEvent.selection; }}
@@ -594,7 +574,7 @@ function GeneralTab() {
         {notes.map(note => (
           <TouchableOpacity key={note.id} style={s.noteCard} onPress={() => openEdit(note)}>
             <View style={s.noteCardRow}>
-              <Text style={s.noteCardTitle} numberOfLines={1}>{note.title || 'Untitled'}</Text>
+              <Text style={s.noteCardTitle} numberOfLines={1}>{note.content.split('\n')[0].replace(/^#+\s/, '') || 'Untitled'}</Text>
               <TouchableOpacity onPress={() => handleDelete(note)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
                 <Ionicons name="trash-outline" size={15} color="#d1d5db" />
               </TouchableOpacity>
@@ -801,9 +781,7 @@ const s = StyleSheet.create({
   chipType: { fontSize: 12, color: '#6b7280', textTransform: 'capitalize' },
   chipMeta: { fontSize: 11, color: '#9ca3af' },
 
-  titleInput:    { fontSize: 18, fontWeight: '700', color: '#111827', paddingVertical: 6, marginBottom: 8, borderBottomWidth: 1, borderBottomColor: '#e5e7eb' },
   contentInput:  { fontSize: 14, color: '#374151', lineHeight: 22, minHeight: 200, paddingVertical: 4 },
-  noteViewTitle: { fontSize: 18, fontWeight: '700', color: '#111827', marginBottom: 10 },
 
   emptyNoteBtn:  { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 4 },
   emptyNoteText: { fontSize: 13, color: '#9ca3af' },

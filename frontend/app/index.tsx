@@ -16,7 +16,7 @@ import {
   KeyboardAvoidingView,
 } from 'react-native';
 import { useFocusEffect } from 'expo-router';
-import { Svg, Rect, Text as SvgText, Line, G, Circle, Path, Defs, LinearGradient, Stop } from 'react-native-svg';
+import { Svg, Rect, Text as SvgText, Line, G, Circle, Path } from 'react-native-svg';
 import { Ionicons } from '@expo/vector-icons';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { getLogs, deleteLog, ActivityLog, getAcceptedSharedWithMe, Share } from '@/lib/api';
@@ -79,12 +79,20 @@ function toLocalDateValue(date: Date): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
+function lightenHex(hex: string): string {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  const b2 = (c: number) => Math.round(c + (255 - c) * 0.4).toString(16).padStart(2, '0');
+  return `#${b2(r)}${b2(g)}${b2(b)}`;
+}
+
 // ── Timeline chart ─────────────────────────────────────────────────────────
 
 const TIME_LABEL_W = 38;
 const DATE_LABEL_H = 30;
 const CHART_H = 216;
-const CHART_H_EXPANDED = Math.round(Dimensions.get('window').height * 0.6);
+const CHART_H_EXPANDED = 280;
 const HOUR_TICKS = [0, 6, 12, 18, 24];
 const BAR_PADDING = 2;
 const MIN_COL_W = 4;
@@ -142,6 +150,7 @@ function TimelineChart({
   numDaysRef,
   onScrollX,
   registerScroll,
+  charts,
 }: {
   logs: ActivityLog[];
   colorMap: Map<string, string[]>;
@@ -157,13 +166,16 @@ function TimelineChart({
   numDaysRef: { current: number };
   onScrollX: (x: number) => void;
   registerScroll: (ref: ScrollView | null) => void;
+  charts: string[];
 }) {
   const scrollRef = useRef<ScrollView>(null);
   const chartWrapRef = useRef<View>(null);
   const chartBodyRef = useRef<View>(null);
   const hideDelayRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [expanded, setExpanded] = useState(false);
+  const [modalPage, setModalPage] = useState(0);
   const chartH = expanded ? CHART_H_EXPANDED : CHART_H;
+  useEffect(() => { if (!expanded) setModalPage(0); }, [expanded]);
   const [isPinching, setIsPinching] = useState(false);
   const [tooltip, setTooltip] = useState<TooltipState | null>(null);
   const [crosshairY, setCrosshairY] = useState<number | null>(null);
@@ -211,7 +223,13 @@ function TimelineChart({
     // days/columns) before the first real onScroll event fires after scrollToEnd.
     setScrollXSnap(Number.MAX_SAFE_INTEGER);
     setScrollYSnap(Number.MAX_SAFE_INTEGER);
-    setTimeout(() => scrollRef.current?.scrollToEnd({ animated: false }), 50);
+    setTimeout(() => {
+      if (isFlippedRef.current) {
+        scrollRef.current?.scrollTo({ y: 1_000_000, animated: false });
+      } else {
+        scrollRef.current?.scrollTo({ x: 1_000_000, animated: false });
+      }
+    }, 50);
   }, [isFlipped]);
 
   const hideTipDelayed = () => {
@@ -394,69 +412,73 @@ function TimelineChart({
   // Sparse date labels so text doesn't overlap at small column widths
   const labelEvery = colWidth < 10 ? 14 : colWidth < 20 ? 7 : 1;
 
-  return (
-    <View style={styles.chartCard} ref={chartWrapRef}>
-      <View style={styles.chartHeader}>
-        <Text style={styles.chartTitle}>Activity Timeline</Text>
-        <View style={styles.zoomRow}>
-          {!isFlipped && (
-            <>
-              <TouchableOpacity style={styles.zoomBtn}
-                onPress={() => setColWidth(w => Math.min(MAX_COL_W, Math.round(w * 1.4)))}>
-                <Text style={styles.zoomBtnText}>+</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.zoomBtn}
-                onPress={() => setColWidth(w => Math.max(MIN_COL_W, Math.round(w * 0.7)))}>
-                <Text style={styles.zoomBtnText}>−</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.zoomBtn, styles.zoomBtnToday]}
-                onPress={() => setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 50)}>
-                <Text style={[styles.zoomBtnText, styles.zoomBtnTodayText]}>Today</Text>
-              </TouchableOpacity>
-            </>
-          )}
-          {isFlipped && (
+  const chartHeaderJSX = (
+    <View style={styles.chartHeader}>
+      <Text style={styles.chartTitle}>Activity Timeline</Text>
+      <View style={styles.zoomRow}>
+        {!isFlipped && (
+          <>
+            <TouchableOpacity style={styles.zoomBtn}
+              onPress={() => setColWidth(w => Math.min(MAX_COL_W, Math.round(w * 1.4)))}>
+              <Text style={styles.zoomBtnText}>+</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.zoomBtn}
+              onPress={() => setColWidth(w => Math.max(MIN_COL_W, Math.round(w * 0.7)))}>
+              <Text style={styles.zoomBtnText}>−</Text>
+            </TouchableOpacity>
             <TouchableOpacity style={[styles.zoomBtn, styles.zoomBtnToday]}
-              onPress={() => setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 50)}>
+              onPress={() => scrollRef.current?.scrollTo({ x: 1_000_000, animated: true })}>
               <Text style={[styles.zoomBtnText, styles.zoomBtnTodayText]}>Today</Text>
             </TouchableOpacity>
-          )}
-          {(() => {
-            const typesSeen = new Set<string>();
-            const chartTypes: string[] = [];
-            logs.forEach(l => { if (!typesSeen.has(l.activity_type)) { typesSeen.add(l.activity_type); chartTypes.push(l.activity_type); } });
-            const hmapOpts: DropdownOpt[] = [
-              { label: 'All', value: '' },
-              ...chartTypes.map(t => ({ label: t, value: t })),
-            ];
-            return (
-              <>
-                {showHeatmap && (
-                  <PanelDropdown value={hmapType} options={hmapOpts} onChange={setHmapType} />
-                )}
-                <TouchableOpacity
-                  style={[styles.zoomBtn, styles.zoomBtnFlip, showHeatmap && styles.zoomBtnFlipOn]}
-                  onPress={() => setShowHeatmap(h => !h)}
-                >
-                  <Ionicons name="flame" size={13} color={showHeatmap ? '#fff' : '#6366f1'} />
-                </TouchableOpacity>
-              </>
-            );
-          })()}
-          <TouchableOpacity
-            style={[styles.zoomBtn, styles.zoomBtnFlip, isFlipped && styles.zoomBtnFlipOn]}
-            onPress={() => setIsFlipped(f => !f)}
-          >
-            <Ionicons name={isFlipped ? 'swap-horizontal' : 'swap-vertical'} size={13} color={isFlipped ? '#fff' : '#6366f1'} />
+          </>
+        )}
+        {isFlipped && (
+          <TouchableOpacity style={[styles.zoomBtn, styles.zoomBtnToday]}
+            onPress={() => scrollRef.current?.scrollTo({ y: 1_000_000, animated: true })}>
+            <Text style={[styles.zoomBtnText, styles.zoomBtnTodayText]}>Today</Text>
           </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.zoomBtn, styles.zoomBtnFlip, expanded && styles.zoomBtnFlipOn]}
-            onPress={() => setExpanded(e => !e)}
-          >
-            <Ionicons name={expanded ? 'contract-outline' : 'expand-outline'} size={13} color={expanded ? '#fff' : '#6366f1'} />
-          </TouchableOpacity>
-        </View>
+        )}
+        {(() => {
+          const typesSeen = new Set<string>();
+          const chartTypes: string[] = [];
+          logs.forEach(l => { if (!typesSeen.has(l.activity_type)) { typesSeen.add(l.activity_type); chartTypes.push(l.activity_type); } });
+          const hmapOpts: DropdownOpt[] = [
+            { label: 'All', value: '' },
+            ...chartTypes.map(t => ({ label: t, value: t })),
+          ];
+          return (
+            <>
+              {showHeatmap && (
+                <PanelDropdown value={hmapType} options={hmapOpts} onChange={setHmapType} />
+              )}
+              <TouchableOpacity
+                style={[styles.zoomBtn, styles.zoomBtnFlip, showHeatmap && styles.zoomBtnFlipOn]}
+                onPress={() => setShowHeatmap(h => !h)}
+              >
+                <Ionicons name="flame" size={13} color={showHeatmap ? '#fff' : '#6366f1'} />
+              </TouchableOpacity>
+            </>
+          );
+        })()}
+        <TouchableOpacity
+          style={[styles.zoomBtn, styles.zoomBtnFlip, isFlipped && styles.zoomBtnFlipOn]}
+          onPress={() => setIsFlipped(f => !f)}
+        >
+          <Ionicons name={isFlipped ? 'swap-horizontal' : 'swap-vertical'} size={13} color={isFlipped ? '#fff' : '#6366f1'} />
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.zoomBtn, styles.zoomBtnFlip, expanded && styles.zoomBtnFlipOn]}
+          onPress={() => setExpanded(e => !e)}
+        >
+          <Ionicons name={expanded ? 'contract-outline' : 'expand-outline'} size={13} color={expanded ? '#fff' : '#6366f1'} />
+        </TouchableOpacity>
       </View>
+    </View>
+  );
+
+  const card = (
+    <View style={[styles.chartCard, expanded && styles.chartCardExpanded]} ref={chartWrapRef}>
+      {chartHeaderJSX}
 
       {isFlipped ? (
         // ── Flipped: dates = rows (Y), time-of-day = columns (X) ─────────────
@@ -924,6 +946,71 @@ function TimelineChart({
       )}
     </View>
   );
+
+  if (expanded) {
+    const totalModalPages = 1 + charts.length;
+    const modalContent = modalPage === 0 ? card : (
+      <View style={styles.activityChartsPanel}>
+        <ActivityChart
+          type={charts[modalPage - 1]}
+          logs={logs}
+          colorPair={colorMap.get(charts[modalPage - 1]) ?? TYPE_COLORS[0]}
+          colWidth={colWidth}
+          numDays={numDays}
+          onScrollX={() => {}}
+          registerScroll={() => {}}
+          collapsed={false}
+          onToggleCollapsed={() => {}}
+          svgHeight={CHART_H_EXPANDED}
+        />
+      </View>
+    );
+    return (
+      <>
+        <View style={styles.chartCard}>
+          {chartHeaderJSX}
+          <View style={{ height: CHART_H, backgroundColor: '#f3f4f6', borderRadius: 6 }} />
+        </View>
+        <Modal visible transparent animationType="fade" onRequestClose={() => setExpanded(false)}>
+          <TouchableOpacity
+            style={styles.timelineModalBackdrop}
+            activeOpacity={1}
+            onPress={() => setExpanded(false)}
+          >
+            <TouchableOpacity activeOpacity={1} style={styles.timelineModalPanel}>
+              {modalContent}
+              {totalModalPages > 1 && (
+                <View style={styles.modalNav}>
+                  <TouchableOpacity
+                    onPress={() => setModalPage(p => Math.max(0, p - 1))}
+                    disabled={modalPage === 0}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <Ionicons name="chevron-back" size={22} color={modalPage === 0 ? 'rgba(255,255,255,0.3)' : '#fff'} />
+                  </TouchableOpacity>
+                  <View style={styles.modalDots}>
+                    {Array.from({ length: totalModalPages }, (_, i) => (
+                      <TouchableOpacity key={i} onPress={() => setModalPage(i)} hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}>
+                        <View style={[styles.modalDot, modalPage === i && styles.modalDotActive]} />
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                  <TouchableOpacity
+                    onPress={() => setModalPage(p => Math.min(totalModalPages - 1, p + 1))}
+                    disabled={modalPage === totalModalPages - 1}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <Ionicons name="chevron-forward" size={22} color={modalPage === totalModalPages - 1 ? 'rgba(255,255,255,0.3)' : '#fff'} />
+                  </TouchableOpacity>
+                </View>
+              )}
+            </TouchableOpacity>
+          </TouchableOpacity>
+        </Modal>
+      </>
+    );
+  }
+  return card;
 }
 
 // ── Per-type chart ─────────────────────────────────────────────────────────
@@ -939,6 +1026,7 @@ function ActivityChart({
   registerScroll,
   collapsed,
   onToggleCollapsed,
+  svgHeight,
 }: {
   type: string;
   logs: ActivityLog[];
@@ -949,6 +1037,7 @@ function ActivityChart({
   registerScroll: (ref: ScrollView | null) => void;
   collapsed: boolean;
   onToggleCollapsed: () => void;
+  svgHeight?: number;
 }) {
   const [tooltip, setTooltip] = useState<{ idx: number } | null>(null);
   const scrollRef = useRef<ScrollView>(null);
@@ -960,9 +1049,6 @@ function ActivityChart({
   useEffect(() => {
     scrollRef.current?.scrollToEnd({ animated: false });
   }, []);
-
-  // SVG IDs must not contain spaces or special chars — sanitize type name
-  const gradId = type.replace(/[^a-zA-Z0-9_-]/g, '_');
 
   const hasDuration = logs.some((l) => l.activity_type === type && l.duration_minutes != null && l.extra_data?.zero !== true && l.extra_data?.untimed !== true);
   const hasQuantity = !hasDuration && logs.some((l) => l.activity_type === type && typeof l.extra_data?.quantity === 'number');
@@ -1085,7 +1171,7 @@ function ActivityChart({
 
   // Layout: pinned Y-axis (YW) + scrollable body (colWidth per day)
   const YW = 36;
-  const SVG_H = 160;
+  const SVG_H = svgHeight ?? 160;
   const PT = 14, PB = 22;
   const plotH = SVG_H - PT - PB;
   const totalChartW = colWidth * numDays;
@@ -1170,13 +1256,7 @@ function ActivityChart({
       {!collapsed && <View style={{ flexDirection: 'row' }}>
         {/* Pinned Y-axis */}
         <Svg width={YW} height={SVG_H}>
-          <Defs>
-            <LinearGradient id={`yax_${gradId}`} x1="0" y1="0" x2="1" y2="1">
-              <Stop offset="0" stopColor={colorPair[0]} stopOpacity="1" />
-              <Stop offset="1" stopColor={colorPair[1]} stopOpacity="1" />
-            </LinearGradient>
-          </Defs>
-          <Rect x={0} y={0} width={YW} height={SVG_H} fill={`url(#yax_${gradId})`} />
+          <Rect x={0} y={0} width={YW} height={SVG_H} fill={colorPair[0]} />
           {yTickVals.map((v, i) => (
             <SvgText key={i} x={YW - 4} y={yOf(v) + 4} fontSize={9} fill="rgba(255,255,255,0.75)" textAnchor="end">
               {formatY(v)}
@@ -1195,13 +1275,7 @@ function ActivityChart({
           style={{ flex: 1 }}
         >
           <Svg width={totalChartW} height={SVG_H}>
-            <Defs>
-              <LinearGradient id={`bg_${gradId}`} x1="0" y1="0" x2="1" y2="1">
-                <Stop offset="0" stopColor={colorPair[0]} stopOpacity="1" />
-                <Stop offset="1" stopColor={colorPair[1]} stopOpacity="1" />
-              </LinearGradient>
-            </Defs>
-            <Rect x={0} y={0} width={totalChartW} height={SVG_H} fill={`url(#bg_${gradId})`} />
+            <Rect x={0} y={0} width={totalChartW} height={SVG_H} fill={colorPair[0]} />
 
             {!hasRangeData && (
               <SvgText x={totalChartW / 2} y={SVG_H / 2 + 5} fontSize={12} fill="rgba(255,255,255,0.6)" textAnchor="middle">
@@ -1573,6 +1647,12 @@ export default function DashboardScreen() {
   const [loading, setLoading] = useState(true);
   const [visibleTypes, setVisibleTypes] = useState<Set<string>>(new Set());
   const [typeOrder, setTypeOrder] = useState<string[]>([]);
+  const [customTypeColors, setCustomTypeColors] = useState<Record<string, string>>(() => {
+    try {
+      const raw = typeof window !== 'undefined' ? localStorage.getItem('activity-tracker:type-colors') : null;
+      return raw ? JSON.parse(raw) : {};
+    } catch { return {}; }
+  });
   const [editingLog, setEditingLog] = useState<ActivityLog | null>(null);
   const [collapsedCharts, setCollapsedCharts] = useState<Set<string>>(new Set());
 
@@ -1648,7 +1728,13 @@ export default function DashboardScreen() {
     }
   };
 
-  useFocusEffect(useCallback(() => { fetchLogs(); }, []));
+  useFocusEffect(useCallback(() => {
+    fetchLogs();
+    try {
+      const raw = typeof window !== 'undefined' ? localStorage.getItem('activity-tracker:type-colors') : null;
+      setCustomTypeColors(raw ? JSON.parse(raw) : {});
+    } catch { /* ignore */ }
+  }, []));
 
   useEffect(() => { fetchLogs(); }, [viewingUserId]);
 
@@ -1662,9 +1748,13 @@ export default function DashboardScreen() {
     }
   });
 
-  // Assign a stable color to each type
+  // Assign a stable color to each type, preferring user-picked custom colors
   const colorMap = new Map<string, string[]>();
-  uniqueTypes.forEach((t, i) => colorMap.set(t, TYPE_COLORS[i % TYPE_COLORS.length]));
+  uniqueTypes.forEach((t) => {
+    const custom = customTypeColors[t];
+    const idx = typeOrder.indexOf(t);
+    colorMap.set(t, custom ? [custom, lightenHex(custom)] : TYPE_COLORS[(idx >= 0 ? idx : uniqueTypes.indexOf(t)) % TYPE_COLORS.length]);
+  });
 
   const toggleType = (type: string) => {
     setVisibleTypes((prev) => {
@@ -1785,6 +1875,7 @@ export default function DashboardScreen() {
               numDaysRef={numDaysRef}
               onScrollX={(x) => syncScrollX(x, 'timeline')}
               registerScroll={(ref) => scrollNodeRefs.current.set('timeline', ref)}
+              charts={charts}
             />
 
             {charts.length > 0 && (
@@ -1986,6 +2077,48 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 2,
     overflow: 'hidden',
+  },
+  chartCardExpanded: {
+    marginBottom: 0,
+  },
+  timelineModalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 24,
+  },
+  timelineModalPanel: {
+    width: '100%',
+  },
+  modalNav: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 4,
+    paddingVertical: 10,
+  },
+  modalDots: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexWrap: 'wrap',
+    gap: 6,
+    flex: 1,
+    marginHorizontal: 8,
+  },
+  modalDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
+    backgroundColor: 'rgba(255,255,255,0.45)',
+  },
+  modalDotActive: {
+    width: 9,
+    height: 9,
+    borderRadius: 4.5,
+    backgroundColor: '#fff',
   },
   activityChartsPanel: {
     backgroundColor: '#fff',

@@ -15,7 +15,7 @@ const ALL_COLUMNS: { key: keyof ActivityLog; label: string }[] = [
   { key: 'started_at',    label: 'Start Time' },
   { key: 'ended_at',      label: 'End Time' },
   { key: 'duration_minutes', label: 'Duration (min)' },
-  { key: 'notes',         label: 'Notes' },
+  { key: 'notes',         label: 'N' },
 ];
 
 function escapeCSV(value: unknown): string {

@@ -13,9 +13,56 @@ import {
 } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { getCategories, hideCategory, deleteCategoryData, restoreCategory, renameCategory, Category } from '@/lib/api';
+import { getCategories, hideCategory, deleteCategoryData, restoreCategory, renameCategory, markPrivate, unmarkPrivate, Category } from '@/lib/api';
 
 const BUILTIN_TYPES = ['sleep'];
+
+const COLOR_OPTIONS = [
+  '#6366f1', // indigo
+  '#8b5cf6', // violet
+  '#ec4899', // pink
+  '#ef4444', // red
+  '#f97316', // orange
+  '#f59e0b', // amber
+  '#84cc16', // lime
+  '#10b981', // emerald
+  '#14b8a6', // teal
+  '#06b6d4', // cyan
+  '#0ea5e9', // sky
+  '#64748b', // slate
+];
+
+const TYPE_COLORS = [
+  '#6366f1', '#10b981', '#f59e0b', '#ef4444',
+  '#8b5cf6', '#0ea5e9', '#ec4899', '#14b8a6',
+];
+
+const COLORS_KEY = 'activity-tracker:type-colors';
+const ORDER_KEY  = 'activity-tracker:type-order';
+
+function loadColors(): Record<string, string> {
+  try {
+    const raw = typeof window !== 'undefined' ? localStorage.getItem(COLORS_KEY) : null;
+    return raw ? JSON.parse(raw) : {};
+  } catch { return {}; }
+}
+
+function saveColors(colors: Record<string, string>) {
+  if (typeof window !== 'undefined') localStorage.setItem(COLORS_KEY, JSON.stringify(colors));
+}
+
+function loadTypeOrder(): string[] {
+  try {
+    const raw = typeof window !== 'undefined' ? localStorage.getItem(ORDER_KEY) : null;
+    return raw ? JSON.parse(raw) : [];
+  } catch { return []; }
+}
+
+function effectiveColor(name: string, customColors: Record<string, string>, typeOrder: string[]): string {
+  if (customColors[name]) return customColors[name];
+  const idx = typeOrder.indexOf(name);
+  return TYPE_COLORS[(idx >= 0 ? idx : 0) % TYPE_COLORS.length];
+}
 
 /** Cross-platform confirmation: window.confirm on web, Alert on native. */
 function ask(title: string, message: string): Promise<boolean> {
@@ -38,6 +85,9 @@ export default function ManageScreen() {
   const [renamingCat, setRenamingCat] = useState<string | null>(null);
   const [renameText, setRenameText] = useState('');
   const [renameLoading, setRenameLoading] = useState(false);
+  const [customColors, setCustomColors] = useState<Record<string, string>>({});
+  const [typeOrder, setTypeOrder] = useState<string[]>([]);
+  const [colorPickerOpen, setColorPickerOpen] = useState<string | null>(null);
 
   const load = async () => {
     try {
@@ -54,6 +104,8 @@ export default function ManageScreen() {
   useFocusEffect(
     useCallback(() => {
       setLoading(true);
+      setCustomColors(loadColors());
+      setTypeOrder(loadTypeOrder());
       load();
     }, [])
   );
@@ -63,9 +115,26 @@ export default function ManageScreen() {
     load();
   };
 
+  const setColor = (name: string, color: string) => {
+    const next = { ...customColors, [name]: color };
+    setCustomColors(next);
+    saveColors(next);
+  };
+
+  const togglePrivate = async (cat: Category) => {
+    try {
+      if (cat.is_private) await unmarkPrivate(cat.name);
+      else await markPrivate(cat.name);
+      await load();
+    } catch {
+      Alert.alert('Error', 'Could not update privacy setting.');
+    }
+  };
+
   const startRename = (cat: Category) => {
     setRenamingCat(cat.name);
     setRenameText(cat.name);
+    setColorPickerOpen(null);
   };
 
   const cancelRename = () => {
@@ -79,6 +148,13 @@ export default function ManageScreen() {
     setRenameLoading(true);
     try {
       await renameCategory(oldName, newName);
+      // migrate custom color to new name
+      if (customColors[oldName]) {
+        const next = { ...customColors, [newName]: customColors[oldName] };
+        delete next[oldName];
+        setCustomColors(next);
+        saveColors(next);
+      }
       setRenamingCat(null);
       setRenameText('');
       await load();
@@ -155,6 +231,8 @@ export default function ManageScreen() {
       )}
       {visible.map((cat) => {
         const isRenaming = renamingCat === cat.name;
+        const currentColor = effectiveColor(cat.name, customColors, typeOrder);
+        const pickerOpen = colorPickerOpen === cat.name;
         return (
           <View key={cat.name} style={styles.card}>
             <View style={styles.cardHeader}>
@@ -189,6 +267,22 @@ export default function ManageScreen() {
                     <Text style={styles.cardCount}>
                       {cat.log_count} {cat.log_count === 1 ? 'entry' : 'entries'}
                     </Text>
+                    <TouchableOpacity
+                      onPress={() => setColorPickerOpen(pickerOpen ? null : cat.name)}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    >
+                      <View style={[styles.colorDot, { backgroundColor: currentColor }, pickerOpen && styles.colorDotActive]} />
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => togglePrivate(cat)}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    >
+                      <Ionicons
+                        name={cat.is_private ? 'lock-closed' : 'lock-open-outline'}
+                        size={15}
+                        color={cat.is_private ? '#6366f1' : '#9ca3af'}
+                      />
+                    </TouchableOpacity>
                     <TouchableOpacity onPress={() => startRename(cat)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
                       <Ionicons name="pencil-outline" size={15} color="#9ca3af" />
                     </TouchableOpacity>
@@ -196,6 +290,23 @@ export default function ManageScreen() {
                 )}
               </View>
             </View>
+            {pickerOpen && !isRenaming && (
+              <View style={styles.swatchRow}>
+                {COLOR_OPTIONS.map(color => (
+                  <TouchableOpacity
+                    key={color}
+                    onPress={() => setColor(cat.name, color)}
+                    hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
+                  >
+                    <View style={[styles.swatch, { backgroundColor: color }]}>
+                      {currentColor === color && (
+                        <Ionicons name="checkmark" size={12} color="#fff" />
+                      )}
+                    </View>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
             {!isRenaming && (
               <View style={styles.cardActions}>
                 <TouchableOpacity
@@ -279,6 +390,19 @@ const styles = StyleSheet.create({
     flex: 1, fontSize: 16, fontWeight: '600', color: '#111827',
     borderBottomWidth: 1.5, borderBottomColor: '#6366f1',
     paddingVertical: 2, marginRight: 8,
+  },
+
+  colorDot: { width: 14, height: 14, borderRadius: 7 },
+  colorDotActive: { borderWidth: 2, borderColor: '#111827' },
+
+  swatchRow: {
+    flexDirection: 'row', flexWrap: 'wrap', gap: 8,
+    paddingVertical: 10, paddingHorizontal: 2, marginBottom: 8,
+    borderBottomWidth: 1, borderBottomColor: '#f3f4f6',
+  },
+  swatch: {
+    width: 26, height: 26, borderRadius: 13,
+    alignItems: 'center', justifyContent: 'center',
   },
 
   cardActions: { flexDirection: 'row', gap: 8 },
