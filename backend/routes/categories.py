@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import List, Optional
 from database import get_db
-from models import ActivityLog, HiddenCategory, Share, User
+from models import ActivityLog, HiddenCategory, PrivateCategory, Share, User
 from auth import get_current_user
 
 router = APIRouter()
@@ -14,6 +14,7 @@ BUILTIN_TYPES = ['sleep']
 class CategoryResponse(BaseModel):
     name: str
     is_hidden: bool
+    is_private: bool
     log_count: int
 
 
@@ -27,7 +28,9 @@ def get_categories(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if owner_id and owner_id != str(current_user.id):
+    is_shared_view = owner_id and owner_id != str(current_user.id)
+
+    if is_shared_view:
         share = db.query(Share).filter(
             Share.owner_id == owner_id,
             Share.viewer_id == current_user.id,
@@ -42,20 +45,58 @@ def get_categories(
     rows = db.query(ActivityLog.activity_type).filter(ActivityLog.user_id == target_id).distinct().all()
     from_logs = {r[0] for r in rows}
 
-    hidden = {
-        h.name for h in db.query(HiddenCategory).filter(HiddenCategory.user_id == target_id).all()
-    }
+    hidden = {h.name for h in db.query(HiddenCategory).filter(HiddenCategory.user_id == target_id).all()}
+    private = {p.name for p in db.query(PrivateCategory).filter(PrivateCategory.user_id == target_id).all()}
 
     all_names = sorted(set(BUILTIN_TYPES) | from_logs | hidden)
+
+    # Shared viewers never see private categories
+    if is_shared_view:
+        all_names = [n for n in all_names if n not in private]
 
     counts = {}
     for row in db.query(ActivityLog.activity_type).filter(ActivityLog.user_id == target_id).all():
         counts[row[0]] = counts.get(row[0], 0) + 1
 
     return [
-        CategoryResponse(name=name, is_hidden=name in hidden, log_count=counts.get(name, 0))
+        CategoryResponse(
+            name=name,
+            is_hidden=name in hidden,
+            is_private=name in private,
+            log_count=counts.get(name, 0),
+        )
         for name in all_names
     ]
+
+
+@router.post("/{name}/private")
+def mark_private(
+    name: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    existing = db.query(PrivateCategory).filter(
+        PrivateCategory.user_id == current_user.id,
+        PrivateCategory.name == name,
+    ).first()
+    if not existing:
+        db.add(PrivateCategory(user_id=current_user.id, name=name))
+        db.commit()
+    return {"private": name}
+
+
+@router.delete("/{name}/private")
+def unmark_private(
+    name: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    db.query(PrivateCategory).filter(
+        PrivateCategory.user_id == current_user.id,
+        PrivateCategory.name == name,
+    ).delete()
+    db.commit()
+    return {"unset_private": name}
 
 
 @router.delete("/{name}")
@@ -122,6 +163,12 @@ def rename_category(
     ).first()
     if hidden:
         hidden.name = new_name
+    private = db.query(PrivateCategory).filter(
+        PrivateCategory.user_id == current_user.id,
+        PrivateCategory.name == name,
+    ).first()
+    if private:
+        private.name = new_name
     db.commit()
     return {"renamed": new_name}
 

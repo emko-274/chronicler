@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
-  ScrollView, ActivityIndicator, Platform,
+  ScrollView, ActivityIndicator, Platform, Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import {
@@ -9,6 +9,19 @@ import {
   Note, LinkedLog,
 } from '@/lib/api';
 import EditLogModal, { EditableLog } from '@/components/EditLogModal';
+
+function ask(title: string, message: string): Promise<boolean> {
+  if (Platform.OS === 'web') {
+    // eslint-disable-next-line no-alert
+    return Promise.resolve(window.confirm(`${title}\n\n${message}`));
+  }
+  return new Promise((resolve) => {
+    Alert.alert(title, message, [
+      { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
+      { text: 'Delete', style: 'destructive', onPress: () => resolve(true) },
+    ]);
+  });
+}
 
 function localDateStr(d: Date = new Date()): string {
   const pad = (n: number) => String(n).padStart(2, '0');
@@ -160,60 +173,60 @@ const fmt = StyleSheet.create({
 
 // ── Log note card ─────────────────────────────────────────────────────────────
 
+function formatDur(minutes: number): string {
+  const h = Math.floor(minutes / 60), m = minutes % 60;
+  return h > 0 ? `${h}h ${m}m` : `${m}m`;
+}
+
 function LogNoteCard({ log, onEdit }: { log: LinkedLog; onEdit: (log: EditableLog) => void }) {
   const [expanded, setExpanded] = useState(false);
   const cardTags = Array.isArray(log.extra_data?.tags) ? (log.extra_data!.tags as string[]) : [];
+  const rawQty = log.extra_data?.quantity;
+  const qtyStr = typeof rawQty === 'number'
+    ? `${rawQty % 1 === 0 ? rawQty.toFixed(0) : rawQty.toFixed(1)}${log.extra_data?.unit ? ` ${log.extra_data.unit}` : ''}`
+    : null;
+  const durStr = log.duration_minutes != null ? formatDur(log.duration_minutes) : null;
+  const summary = qtyStr ?? durStr;
+  const isTimeless = log.extra_data?.zero === true || log.extra_data?.untimed === true;
+  const timeStr = isTimeless
+    ? new Date(log.started_at).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
+    : timeLabel(log.started_at) + (log.ended_at ? ` – ${timeLabel(log.ended_at)}` : '');
+
   return (
     <TouchableOpacity style={s.logCard} onPress={() => setExpanded(e => !e)} activeOpacity={0.8}>
       <View style={s.logCardRow}>
         <Text style={s.logCardType}>{log.activity_type}</Text>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-          <Text style={s.logCardMeta}>{timeLabel(log.started_at)}</Text>
-          <TouchableOpacity onPress={(e) => { e.stopPropagation?.(); onEdit(log); }} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
-            <Ionicons name="pencil-outline" size={13} color="#9ca3af" />
-          </TouchableOpacity>
-          <Ionicons name={expanded ? 'chevron-up' : 'chevron-down'} size={13} color="#9ca3af" />
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          {log.notes ? <Ionicons name="document-text-outline" size={13} color="#a5b4fc" /> : null}
+          <Ionicons name={expanded ? 'chevron-up' : 'chevron-forward'} size={13} color="#9ca3af" />
         </View>
       </View>
-      {!expanded && cardTags.length > 0 && (
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 5 }}>
-          {cardTags.map(tag => (
-            <View key={tag} style={s.logTagChip}>
-              <Text style={s.logTagText}>{tag}</Text>
-            </View>
-          ))}
-        </View>
-      )}
       {expanded && (
         <View style={s.logCardAttrs}>
-          <LogAttr label="Start"    value={new Date(log.started_at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })} />
-          {log.ended_at   && <LogAttr label="End"      value={new Date(log.ended_at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })} />}
-          {log.duration_minutes != null && <LogAttr label="Duration" value={`${log.duration_minutes} min`} />}
-          {log.notes      && <LogAttr label="Note"     value={log.notes} />}
-          {Array.isArray(log.extra_data?.tags) && (log.extra_data!.tags as string[]).length > 0 && (
-            <View style={s.logAttrRow}>
-              <Text style={s.logAttrLabel}>Tags</Text>
-              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 4, flex: 1 }}>
-                {(log.extra_data!.tags as string[]).map(tag => (
-                  <View key={tag} style={s.logTagChip}>
-                    <Text style={s.logTagText}>{tag}</Text>
-                  </View>
-                ))}
-              </View>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+            <Text style={s.logCardMeta}>{timeStr}</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+              {summary != null && <Text style={s.logCardQty}>{summary}</Text>}
+              <TouchableOpacity onPress={(e) => { e.stopPropagation?.(); onEdit(log); }} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
+                <Ionicons name="pencil-outline" size={13} color="#9ca3af" />
+              </TouchableOpacity>
+            </View>
+          </View>
+          {log.notes != null && log.notes.length > 0 && (
+            <Text style={s.logCardNote}>{log.notes}</Text>
+          )}
+          {cardTags.length > 0 && (
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 4 }}>
+              {cardTags.map(tag => (
+                <View key={tag} style={s.logTagChip}>
+                  <Text style={s.logTagText}>{tag}</Text>
+                </View>
+              ))}
             </View>
           )}
         </View>
       )}
     </TouchableOpacity>
-  );
-}
-
-function LogAttr({ label, value }: { label: string; value: string }) {
-  return (
-    <View style={s.logAttrRow}>
-      <Text style={s.logAttrLabel}>{label}</Text>
-      <Text style={s.logAttrValue}>{value}</Text>
-    </View>
   );
 }
 
@@ -352,23 +365,19 @@ function DayDetail({ date, onDateChange, onBack, onNoteChanged }: {
             <Text style={s.sectionLabel}>Notes</Text>
           )}
           {editing ? (
-            <>
-              <TextInput
-                ref={inputRef}
-                style={s.contentInput}
-                placeholder={'Write your note…\n\nFormatting: # Heading  - Bullet  **Bold**  *Italic*'}
-                placeholderTextColor="#c4c9d4"
-                value={content}
-                onChangeText={v => { setContent(v); scheduleSave(v); }}
-                multiline
-                textAlignVertical="top"
-                onSelectionChange={e => { selRef.current = e.nativeEvent.selection; }}
-              />
-            </>
+            <TextInput
+              ref={inputRef}
+              style={s.contentInput}
+              placeholder={'Write your note…\n\nFormatting: # Heading  - Bullet  **Bold**  *Italic*'}
+              placeholderTextColor="#c4c9d4"
+              value={content}
+              onChangeText={v => { setContent(v); scheduleSave(v); }}
+              multiline
+              textAlignVertical="top"
+              onSelectionChange={e => { selRef.current = e.nativeEvent.selection; }}
+            />
           ) : hasNote ? (
-            <>
-              <MarkdownView content={content} />
-            </>
+            <MarkdownView content={content} />
           ) : (
             <TouchableOpacity style={s.emptyNoteBtn} onPress={() => setEditing(true)}>
               <Ionicons name="pencil-outline" size={14} color="#9ca3af" />
@@ -519,15 +528,10 @@ function GeneralTab() {
   }
 
   async function handleDelete(note: Note) {
-    const { Alert } = await import('react-native');
-    Alert.alert('Delete note', 'Are you sure?', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Delete', style: 'destructive', onPress: async () => {
-        await deleteNote(note.id);
-        if (noteRef.current?.id === note.id) setEditing(false);
-        loadNotes();
-      }},
-    ]);
+    if (!await ask('Delete note', 'Are you sure? This cannot be undone.')) return;
+    await deleteNote(note.id);
+    if (noteRef.current?.id === note.id) setEditing(false);
+    loadNotes();
   }
 
   if (editing) {
@@ -762,14 +766,12 @@ const s = StyleSheet.create({
   sectionLabel: { fontSize: 11, fontWeight: '700', color: '#9ca3af', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 },
 
   logCard:     { backgroundColor: '#f9fafb', borderRadius: 8, padding: 10, marginBottom: 6, borderWidth: 1, borderColor: '#e5e7eb' },
-  logCardRow:  { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  logCardType: { fontSize: 13, fontWeight: '700', color: '#374151', textTransform: 'capitalize' },
-  logCardMeta: { fontSize: 11, color: '#9ca3af' },
-  logCardNote: { fontSize: 13, color: '#4b5563', lineHeight: 19 },
-  logCardAttrs:  { marginTop: 8, gap: 4, borderTopWidth: 1, borderTopColor: '#e5e7eb', paddingTop: 8 },
-  logAttrRow:    { flexDirection: 'row', gap: 8 },
-  logAttrLabel:  { fontSize: 11, fontWeight: '700', color: '#9ca3af', width: 52, textTransform: 'uppercase' },
-  logAttrValue:  { fontSize: 12, color: '#374151', flex: 1, lineHeight: 18 },
+  logCardRow:  { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
+  logCardType: { fontSize: 13, fontWeight: '600', color: '#6366f1', textTransform: 'capitalize' },
+  logCardMeta: { fontSize: 11, color: '#9ca3af', marginTop: 1 },
+  logCardQty:  { fontSize: 13, fontWeight: '500', color: '#374151' },
+  logCardNote: { fontSize: 12, color: '#6b7280', lineHeight: 18 },
+  logCardAttrs:  { marginTop: 6, gap: 4, borderTopWidth: 1, borderTopColor: '#f3f4f6', paddingTop: 6 },
   logTagChip:    { backgroundColor: '#eef2ff', borderRadius: 10, paddingHorizontal: 7, paddingVertical: 2 },
   logTagText:    { fontSize: 11, color: '#4f46e5', fontWeight: '500' },
 

@@ -15,13 +15,11 @@ router = APIRouter()
 class NoteCreate(BaseModel):
     note_type: str
     date: Optional[str] = None
-    title: Optional[str] = None
     content: str = ""
     linked_log_ids: list[str] = []
 
 
 class NoteUpdate(BaseModel):
-    title: Optional[str] = None
     content: Optional[str] = None
     linked_log_ids: Optional[list[str]] = None
 
@@ -50,7 +48,6 @@ def _serialize(note: Note, db: Session, user_id=None) -> dict:
         "id": str(note.id),
         "note_type": note.note_type,
         "date": note.date,
-        "title": note.title,
         "content": note.content,
         "linked_log_ids": note.linked_log_ids or [],
         "linked_logs": linked_logs,
@@ -104,7 +101,6 @@ def create_note(
         user_id=current_user.id,
         note_type=body.note_type,
         date=body.date,
-        title=body.title,
         content=body.content,
         linked_log_ids=body.linked_log_ids,
     )
@@ -127,8 +123,6 @@ def update_note(
     ).first()
     if not note:
         raise HTTPException(status_code=404, detail="Note not found")
-    if body.title is not None:
-        note.title = body.title
     if body.content is not None:
         note.content = body.content
     if body.linked_log_ids is not None:

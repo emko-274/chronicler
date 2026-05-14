@@ -4,7 +4,7 @@ from pydantic import BaseModel
 from datetime import datetime
 from typing import Optional
 from database import get_db
-from models import ActivityLog, HiddenCategory, Share, User
+from models import ActivityLog, HiddenCategory, PrivateCategory, Share, User
 from auth import get_current_user
 
 router = APIRouter()
@@ -68,7 +68,9 @@ def get_logs(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if owner_id and owner_id != str(current_user.id):
+    is_shared_view = owner_id and owner_id != str(current_user.id)
+
+    if is_shared_view:
         share = db.query(Share).filter(
             Share.owner_id == owner_id,
             Share.viewer_id == current_user.id,
@@ -83,10 +85,14 @@ def get_logs(
     query = db.query(ActivityLog).filter(ActivityLog.user_id == target_id)
     if activity_type:
         query = query.filter(ActivityLog.activity_type == activity_type)
+
+    excluded = set()
     if not include_hidden:
-        hidden = {h.name for h in db.query(HiddenCategory).filter(HiddenCategory.user_id == target_id).all()}
-        if hidden:
-            query = query.filter(ActivityLog.activity_type.notin_(hidden))
+        excluded |= {h.name for h in db.query(HiddenCategory).filter(HiddenCategory.user_id == target_id).all()}
+    if is_shared_view:
+        excluded |= {p.name for p in db.query(PrivateCategory).filter(PrivateCategory.user_id == target_id).all()}
+    if excluded:
+        query = query.filter(ActivityLog.activity_type.notin_(excluded))
     results = query.order_by(ActivityLog.started_at.desc()).limit(limit).all()
     for log in results:
         log.id = str(log.id)

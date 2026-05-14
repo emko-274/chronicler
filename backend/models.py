@@ -45,6 +45,13 @@ class ActivityLog(Base):
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
+class PrivateCategory(Base):
+    __tablename__ = "private_categories"
+
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), primary_key=True)
+    name = Column(String(100), primary_key=True)
+
+
 class Share(Base):
     __tablename__ = "shares"
 
@@ -65,7 +72,6 @@ class Note(Base):
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True)
     note_type = Column(String(20), nullable=False)
     date = Column(String(10), nullable=True)
-    title = Column(String(200), nullable=True)
     content = Column(Text, nullable=False, default="")
     linked_log_ids = Column(JSON, nullable=False, default=list)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
