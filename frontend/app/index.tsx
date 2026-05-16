@@ -427,14 +427,14 @@ function TimelineChart({
               <Text style={styles.zoomBtnText}>−</Text>
             </TouchableOpacity>
             <TouchableOpacity style={[styles.zoomBtn, styles.zoomBtnToday]}
-              onPress={() => scrollRef.current?.scrollTo({ x: 1_000_000, animated: true })}>
+              onPress={() => scrollRef.current?.scrollTo({ x: Math.max(0, colWidth * numDays - viewportW), animated: true })}>
               <Text style={[styles.zoomBtnText, styles.zoomBtnTodayText]}>Today</Text>
             </TouchableOpacity>
           </>
         )}
         {isFlipped && (
           <TouchableOpacity style={[styles.zoomBtn, styles.zoomBtnToday]}
-            onPress={() => scrollRef.current?.scrollTo({ y: 1_000_000, animated: true })}>
+            onPress={() => scrollRef.current?.scrollTo({ y: Math.max(0, numDays * FLIPPED_ROW_H - chartH), animated: true })}>
             <Text style={[styles.zoomBtnText, styles.zoomBtnTodayText]}>Today</Text>
           </TouchableOpacity>
         )}
@@ -1067,7 +1067,7 @@ function ActivityChart({
       .filter((l) => {
         if (l.activity_type !== type) return false;
         if (hasDuration) return l.extra_data?.zero !== true && l.extra_data?.untimed !== true;
-        if (hasQuantity) return typeof l.extra_data?.quantity === 'number';
+        if (hasQuantity) return typeof l.extra_data?.quantity === 'number' && l.extra_data.quantity !== 0;
         if (l.extra_data?.quantity === 0) return false;
         return true;
       })
@@ -1704,20 +1704,20 @@ export default function DashboardScreen() {
   const isSyncingScroll = useRef(false);
 
   const syncScrollX = useCallback((x: number, sourceKey: string) => {
+    if (isSyncingScroll.current) return;
+    isSyncingScroll.current = true;
     if (Platform.OS === 'web') {
       scrollNodeRefs.current.forEach((ref, key) => {
         if (key === sourceKey || !ref) return;
         (ref as unknown as HTMLElement).scrollLeft = x;
       });
     } else {
-      if (isSyncingScroll.current) return;
-      isSyncingScroll.current = true;
       scrollNodeRefs.current.forEach((ref, key) => {
         if (key === sourceKey || !ref) return;
         (ref as ScrollView).scrollTo({ x, animated: false });
       });
-      setTimeout(() => { isSyncingScroll.current = false; }, 50);
     }
+    setTimeout(() => { isSyncingScroll.current = false; }, 50);
   }, []);
 
   const [logPage, setLogPage] = useState(0);
