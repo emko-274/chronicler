@@ -6,7 +6,7 @@ from routes import logs, analyze, categories, notes, auth, shares
 
 Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title="Activity Tracker API")
+app = FastAPI(title="Activity Tracker API", redirect_slashes=False)
 
 _raw_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:8081,http://localhost:19006")
 _origins = [o.strip() for o in _raw_origins.split(",") if o.strip()]
