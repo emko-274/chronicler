@@ -65,6 +65,15 @@ class Share(Base):
     __table_args__ = (UniqueConstraint('owner_id', 'viewer_id', name='uq_share_pair'),)
 
 
+class PublicLink(Base):
+    __tablename__ = "public_links"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    token = Column(String(32), unique=True, nullable=False, index=True)
+    owner_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, unique=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+
 class Note(Base):
     __tablename__ = "notes"
 

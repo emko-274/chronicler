@@ -19,7 +19,7 @@ import { useFocusEffect } from 'expo-router';
 import { Svg, Rect, Text as SvgText, Line, G, Circle, Path } from 'react-native-svg';
 import { Ionicons } from '@expo/vector-icons';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
-import { getLogs, deleteLog, ActivityLog, getAcceptedSharedWithMe, Share } from '@/lib/api';
+import { getLogs, deleteLog, ActivityLog } from '@/lib/api';
 import SharePanel from '@/components/SharePanel';
 import EditLogModal from '@/components/EditLogModal';
 
@@ -1649,26 +1649,7 @@ const SORT_OPTIONS: DropdownOpt[] = [
 ];
 
 export default function DashboardScreen() {
-  const [viewingUserId, setViewingUserId] = useState<string | null>(null);
-  const [viewingUserName, setViewingUserName] = useState<string | null>(null);
-  const viewingUserIdRef = useRef<string | null>(null);
-  const [sharedWithMe, setSharedWithMe] = useState<Share[]>([]);
   const [showSharePanel, setShowSharePanel] = useState(false);
-
-  const loadSharedWithMe = async () => {
-    try {
-      const data = await getAcceptedSharedWithMe();
-      setSharedWithMe(data);
-    } catch {}
-  };
-
-  useEffect(() => { loadSharedWithMe(); }, []);
-
-  const switchUser = (userId: string | null, userName: string | null) => {
-    viewingUserIdRef.current = userId;
-    setViewingUserId(userId);
-    setViewingUserName(userName);
-  };
 
   const [logs, setLogs] = useState<ActivityLog[]>([]);
   const [loading, setLoading] = useState(true);
@@ -1729,7 +1710,7 @@ export default function DashboardScreen() {
   const fetchLogs = async () => {
     setLoading(true);
     try {
-      const data = await getLogs(undefined, 500, viewingUserIdRef.current ?? undefined);
+      const data = await getLogs(undefined, 500);
       setLogs(data);
       setLogPage(0);
       // Show all types by default (preserve any manual toggles by only adding new ones)
@@ -1776,7 +1757,7 @@ export default function DashboardScreen() {
     } catch { /* ignore */ }
   }, []));
 
-  useEffect(() => { fetchLogs(); }, [viewingUserId]);
+  useEffect(() => { fetchLogs(); }, []);
 
   // Derive unique types in the order they first appear (API returns desc, so reverse for order)
   const uniqueTypes: string[] = [];
@@ -1845,48 +1826,15 @@ export default function DashboardScreen() {
         ListHeaderComponent={
           <>
             <View style={styles.headingRow}>
-              <Text style={styles.heading}>
-                {viewingUserName ? `${viewingUserName}'s Dashboard` : 'Dashboard'}
-              </Text>
+              <Text style={styles.heading}>Dashboard</Text>
               <TouchableOpacity onPress={() => setShowSharePanel(true)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                <Ionicons name="people-outline" size={22} color="#6366f1" />
+                <Ionicons name="link-outline" size={22} color="#6366f1" />
               </TouchableOpacity>
             </View>
-
-            {/* Dashboard switcher — own + accepted shared dashboards */}
-            {sharedWithMe.length > 0 && (
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.switcherRow} contentContainerStyle={styles.switcherContent}>
-                <TouchableOpacity
-                  style={[styles.switcherPill, !viewingUserId && styles.switcherPillActive]}
-                  onPress={() => switchUser(null, null)}
-                >
-                  <Text style={[styles.switcherPillText, !viewingUserId && styles.switcherPillTextActive]}>Mine</Text>
-                </TouchableOpacity>
-                {sharedWithMe.map((s) => (
-                  <TouchableOpacity
-                    key={s.id}
-                    style={[styles.switcherPill, viewingUserId === s.user.id && styles.switcherPillActive]}
-                    onPress={() => switchUser(s.user.id, s.user.name)}
-                  >
-                    <Text style={[styles.switcherPillText, viewingUserId === s.user.id && styles.switcherPillTextActive]}>
-                      {s.user.name || s.user.email}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
-            )}
-
-            {viewingUserId && (
-              <View style={styles.readOnlyBanner}>
-                <Ionicons name="eye-outline" size={13} color="#6b7280" />
-                <Text style={styles.readOnlyText}>Read-only view</Text>
-              </View>
-            )}
 
             <SharePanel
               visible={showSharePanel}
               onClose={() => setShowSharePanel(false)}
-              onSharesChanged={loadSharedWithMe}
             />
 
             <TypeToggles

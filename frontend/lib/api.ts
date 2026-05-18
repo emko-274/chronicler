@@ -235,3 +235,20 @@ export const declineShare = (share_id: string): Promise<void> =>
 
 export const revokeShare = (share_id: string): Promise<void> =>
   api.delete(`/shares/${share_id}`).then((r) => r.data);
+
+// ── Public links ───────────────────────────────────────────────────────────
+
+export const getMyPublicLink = (): Promise<{ token: string | null }> =>
+  api.get('/public/link').then((r) => r.data);
+
+export const generatePublicLink = (): Promise<{ token: string }> =>
+  api.post('/public/link').then((r) => r.data);
+
+export const revokePublicLink = (): Promise<void> =>
+  api.delete('/public/link').then((r) => r.data);
+
+export const getPublicLogs = (token: string): Promise<ActivityLog[]> =>
+  axios.get(`${API_BASE_URL}/public/${token}/logs`).then((r) => fixDates(r.data));
+
+export const getPublicInfo = (token: string): Promise<{ name: string }> =>
+  axios.get(`${API_BASE_URL}/public/${token}/info`).then((r) => r.data);

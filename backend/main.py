@@ -2,7 +2,7 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from database import engine, Base
-from routes import logs, analyze, categories, notes, auth, shares
+from routes import logs, analyze, categories, notes, auth, shares, public
 
 Base.metadata.create_all(bind=engine)
 
@@ -25,6 +25,7 @@ app.include_router(logs.router, prefix="/logs", tags=["logs"])
 app.include_router(analyze.router, prefix="/analyze", tags=["analyze"])
 app.include_router(categories.router, prefix="/categories", tags=["categories"])
 app.include_router(notes.router, prefix="/notes", tags=["notes"])
+app.include_router(public.router, prefix="/public", tags=["public"])
 
 
 @app.get("/health")

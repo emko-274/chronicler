@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Tabs, usePathname } from 'expo-router';
+import { Tabs, Stack, usePathname } from 'expo-router';
 import {
   View, Modal, TouchableOpacity, Text, StyleSheet,
   Dimensions, Platform,
@@ -60,6 +60,7 @@ export default function Layout() {
   const [panelY, setPanelY] = useState(INIT_Y);
   const pathname = usePathname();
   const onDashboard = pathname === '/' || pathname === '/index';
+  const isPublicView = pathname.startsWith('/view/');
 
   function closePanel() {
     setOpen(false);
@@ -101,6 +102,12 @@ export default function Layout() {
   }
 
   if (!authReady) return <View style={{ flex: 1, backgroundColor: '#fff' }} />;
+
+  // Public view pages don't require login
+  if (isPublicView) {
+    return <Stack screenOptions={{ headerShown: false }} />;
+  }
+
   if (!user) return <LoginScreen onSignIn={handleSignIn} />;
 
   return (
@@ -119,6 +126,7 @@ export default function Layout() {
         <Tabs.Screen name="notes"    options={{ title: 'Notes',        tabBarIcon: tabIcon('journal-outline') }} />
         <Tabs.Screen name="manage"   options={{ title: 'Manage',       tabBarIcon: tabIcon('pricetag-outline') }} />
         <Tabs.Screen name="export"   options={{ title: 'Export',       tabBarIcon: tabIcon('download-outline') }} />
+        <Tabs.Screen name="view/[token]" options={{ href: null }} />
       </Tabs>
 
       {Platform.OS === 'web' ? (

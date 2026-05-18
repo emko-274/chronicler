@@ -1,88 +1,76 @@
 import { useState, useEffect } from 'react';
 import {
-  View, Text, TextInput, TouchableOpacity, StyleSheet,
-  ScrollView, ActivityIndicator, Modal, Alert, Platform,
+  View, Text, TouchableOpacity, StyleSheet,
+  ActivityIndicator, Modal, Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import {
-  getSentShares, getReceivedShares, sendShareInvite,
-  acceptShare, declineShare, revokeShare, Share,
-} from '../lib/api';
+import { getMyPublicLink, generatePublicLink, revokePublicLink } from '../lib/api';
+
+const APP_BASE_URL = process.env.EXPO_PUBLIC_APP_URL || (
+  typeof window !== 'undefined' ? window.location.origin : 'https://chronicler-ten.vercel.app'
+);
 
 interface Props {
   visible: boolean;
   onClose: () => void;
-  onSharesChanged: () => void; // notify parent to refresh accepted list
 }
 
-export default function SharePanel({ visible, onClose, onSharesChanged }: Props) {
-  const [sent, setSent] = useState<Share[]>([]);
-  const [received, setReceived] = useState<Share[]>([]);
-  const [email, setEmail] = useState('');
-  const [sending, setSending] = useState(false);
+export default function SharePanel({ visible, onClose }: Props) {
+  const [token, setToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+  const [working, setWorking] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const shareUrl = token ? `${APP_BASE_URL}/view/${token}` : null;
 
   const load = async () => {
     setLoading(true);
     try {
-      const [s, r] = await Promise.all([getSentShares(), getReceivedShares()]);
-      setSent(s);
-      setReceived(r);
+      const data = await getMyPublicLink();
+      setToken(data.token);
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    if (visible) { load(); setEmail(''); setError(''); }
+    if (visible) { load(); setCopied(false); }
   }, [visible]);
 
-  const handleSend = async () => {
-    const trimmed = email.trim().toLowerCase();
-    if (!trimmed) return;
-    setSending(true);
-    setError('');
+  const handleGenerate = async () => {
+    setWorking(true);
     try {
-      await sendShareInvite(trimmed);
-      setEmail('');
-      await load();
-    } catch (e: any) {
-      setError(e?.response?.data?.detail ?? 'Failed to send invite');
+      const data = await generatePublicLink();
+      setToken(data.token);
+      setCopied(false);
     } finally {
-      setSending(false);
+      setWorking(false);
     }
   };
 
-  const handleAccept = async (share: Share) => {
-    await acceptShare(share.id);
-    await load();
-    onSharesChanged();
-  };
-
-  const handleDecline = async (share: Share) => {
-    await declineShare(share.id);
-    await load();
-  };
-
-  const handleRevoke = async (share: Share) => {
-    const label = share.status === 'accepted' ? share.user.name : share.user.email;
+  const handleRevoke = async () => {
     const confirmed = Platform.OS === 'web'
-      ? window.confirm(`Remove access for ${label}?`)
-      : await new Promise<boolean>((res) =>
-          Alert.alert('Remove access', `Remove access for ${label}?`, [
-            { text: 'Cancel', onPress: () => res(false) },
-            { text: 'Remove', style: 'destructive', onPress: () => res(true) },
-          ])
-        );
+      ? window.confirm('Revoke this link? Anyone with the current link will lose access.')
+      : true;
     if (!confirmed) return;
-    await revokeShare(share.id);
-    await load();
-    onSharesChanged();
+    setWorking(true);
+    try {
+      await revokePublicLink();
+      setToken(null);
+      setCopied(false);
+    } finally {
+      setWorking(false);
+    }
   };
 
-  const pendingReceived = received.filter((s) => s.status === 'pending');
-  const activeSent = sent.filter((s) => s.status !== 'declined');
+  const handleCopy = async () => {
+    if (!shareUrl) return;
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch { /* clipboard not available */ }
+  };
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
@@ -90,98 +78,72 @@ export default function SharePanel({ visible, onClose, onSharesChanged }: Props)
         <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={onClose} />
         <View style={styles.sheet}>
           <View style={styles.header}>
-            <Ionicons name="people-outline" size={16} color="#6366f1" />
+            <Ionicons name="link-outline" size={16} color="#6366f1" />
             <Text style={styles.title}>Share Dashboard</Text>
             <TouchableOpacity onPress={onClose} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
               <Ionicons name="close" size={20} color="#9ca3af" />
             </TouchableOpacity>
           </View>
 
-          <ScrollView style={styles.body} keyboardShouldPersistTaps="handled">
-            {/* Invite */}
-            <Text style={styles.sectionLabel}>Invite someone</Text>
-            <View style={styles.inviteRow}>
-              <TextInput
-                style={styles.input}
-                placeholder="Email address"
-                placeholderTextColor="#9ca3af"
-                value={email}
-                onChangeText={setEmail}
-                autoCapitalize="none"
-                keyboardType="email-address"
-                returnKeyType="send"
-                onSubmitEditing={handleSend}
-                editable={!sending}
-              />
-              <TouchableOpacity
-                style={[styles.sendBtn, (!email.trim() || sending) && styles.sendBtnDisabled]}
-                onPress={handleSend}
-                disabled={!email.trim() || sending}
-              >
-                {sending
-                  ? <ActivityIndicator size="small" color="#fff" />
-                  : <Ionicons name="send" size={15} color="#fff" />}
-              </TouchableOpacity>
-            </View>
-            {!!error && <Text style={styles.error}>{error}</Text>}
-
+          <View style={styles.body}>
             {loading ? (
-              <ActivityIndicator color="#6366f1" style={{ marginTop: 24 }} />
+              <ActivityIndicator color="#6366f1" style={{ marginVertical: 32 }} />
+            ) : token ? (
+              <>
+                <Text style={styles.desc}>
+                  Anyone with this link can view your dashboard. Private categories are excluded.
+                </Text>
+                <View style={styles.linkBox}>
+                  <Text style={styles.linkText} numberOfLines={1} ellipsizeMode="middle">
+                    {shareUrl}
+                  </Text>
+                </View>
+                <View style={styles.actions}>
+                  <TouchableOpacity
+                    style={[styles.btn, styles.btnPrimary, working && styles.btnDisabled]}
+                    onPress={handleCopy}
+                    disabled={working}
+                  >
+                    <Ionicons name={copied ? 'checkmark' : 'copy-outline'} size={15} color="#fff" />
+                    <Text style={styles.btnPrimaryText}>{copied ? 'Copied!' : 'Copy link'}</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.btn, styles.btnDanger, working && styles.btnDisabled]}
+                    onPress={handleRevoke}
+                    disabled={working}
+                  >
+                    {working
+                      ? <ActivityIndicator size="small" color="#dc2626" />
+                      : <Text style={styles.btnDangerText}>Revoke</Text>}
+                  </TouchableOpacity>
+                </View>
+                <TouchableOpacity
+                  style={[styles.btn, styles.btnSecondary, { marginTop: 8 }, working && styles.btnDisabled]}
+                  onPress={handleGenerate}
+                  disabled={working}
+                >
+                  <Text style={styles.btnSecondaryText}>Generate new link</Text>
+                </TouchableOpacity>
+              </>
             ) : (
               <>
-                {/* Pending invites received */}
-                {pendingReceived.length > 0 && (
-                  <>
-                    <Text style={styles.sectionLabel}>Pending invites</Text>
-                    {pendingReceived.map((s) => (
-                      <View key={s.id} style={styles.card}>
-                        <View style={styles.cardInfo}>
-                          <Text style={styles.cardName}>{s.user.name}</Text>
-                          <Text style={styles.cardEmail}>{s.user.email}</Text>
-                          <Text style={styles.cardSub}>wants to view your dashboard</Text>
-                        </View>
-                        <View style={styles.cardActions}>
-                          <TouchableOpacity style={styles.acceptBtn} onPress={() => handleAccept(s)}>
-                            <Text style={styles.acceptBtnText}>Accept</Text>
-                          </TouchableOpacity>
-                          <TouchableOpacity style={styles.declineBtn} onPress={() => handleDecline(s)}>
-                            <Text style={styles.declineBtnText}>Decline</Text>
-                          </TouchableOpacity>
-                        </View>
-                      </View>
-                    ))}
-                  </>
-                )}
-
-                {/* Sent invites */}
-                {activeSent.length > 0 && (
-                  <>
-                    <Text style={styles.sectionLabel}>Sharing with</Text>
-                    {activeSent.map((s) => (
-                      <View key={s.id} style={styles.card}>
-                        <View style={styles.cardInfo}>
-                          <Text style={styles.cardName}>{s.user.name || s.user.email}</Text>
-                          <Text style={styles.cardEmail}>{s.user.email}</Text>
-                          <View style={[styles.badge, s.status === 'accepted' ? styles.badgeAccepted : styles.badgePending]}>
-                            <Text style={[styles.badgeText, s.status === 'accepted' ? styles.badgeAcceptedText : styles.badgePendingText]}>
-                              {s.status === 'accepted' ? 'Active' : 'Pending'}
-                            </Text>
-                          </View>
-                        </View>
-                        <TouchableOpacity onPress={() => handleRevoke(s)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                          <Ionicons name="close-circle-outline" size={20} color="#9ca3af" />
-                        </TouchableOpacity>
-                      </View>
-                    ))}
-                  </>
-                )}
-
-                {pendingReceived.length === 0 && activeSent.length === 0 && (
-                  <Text style={styles.empty}>No active shares yet.</Text>
-                )}
+                <Text style={styles.desc}>
+                  Generate a shareable link so anyone can view your dashboard without an account.
+                  Private categories will not be included.
+                </Text>
+                <TouchableOpacity
+                  style={[styles.btn, styles.btnPrimary, working && styles.btnDisabled]}
+                  onPress={handleGenerate}
+                  disabled={working}
+                >
+                  {working
+                    ? <ActivityIndicator size="small" color="#fff" />
+                    : <Ionicons name="link-outline" size={15} color="#fff" />}
+                  <Text style={styles.btnPrimaryText}>Generate link</Text>
+                </TouchableOpacity>
               </>
             )}
-          </ScrollView>
+          </View>
         </View>
       </View>
     </Modal>
@@ -195,62 +157,30 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
-    maxHeight: '80%',
-    paddingBottom: 32,
+    paddingBottom: 40,
   },
   header: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
     padding: 16, borderBottomWidth: 1, borderBottomColor: '#e5e7eb',
   },
   title: { flex: 1, fontSize: 15, fontWeight: '700', color: '#111827' },
-  body: { padding: 16 },
-
-  sectionLabel: {
-    fontSize: 12, fontWeight: '700', color: '#6b7280',
-    textTransform: 'uppercase', letterSpacing: 0.5,
-    marginTop: 16, marginBottom: 8,
+  body: { padding: 20 },
+  desc: { fontSize: 14, color: '#6b7280', lineHeight: 20, marginBottom: 16 },
+  linkBox: {
+    backgroundColor: '#f3f4f6', borderRadius: 8, borderWidth: 1, borderColor: '#e5e7eb',
+    paddingHorizontal: 12, paddingVertical: 10, marginBottom: 12,
   },
-  inviteRow: { flexDirection: 'row', gap: 8 },
-  input: {
-    flex: 1, borderWidth: 1, borderColor: '#d1d5db', borderRadius: 8,
-    paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, color: '#111827',
+  linkText: { fontSize: 13, color: '#374151', fontFamily: Platform.OS === 'web' ? 'monospace' : undefined },
+  actions: { flexDirection: 'row', gap: 8 },
+  btn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    gap: 6, paddingVertical: 10, paddingHorizontal: 16, borderRadius: 8,
   },
-  sendBtn: {
-    backgroundColor: '#6366f1', borderRadius: 8,
-    paddingHorizontal: 14, justifyContent: 'center', alignItems: 'center',
-  },
-  sendBtnDisabled: { backgroundColor: '#c7d2fe' },
-  error: { fontSize: 13, color: '#ef4444', marginTop: 6 },
-
-  card: {
-    flexDirection: 'row', alignItems: 'center',
-    backgroundColor: '#f9fafb', borderRadius: 10,
-    borderWidth: 1, borderColor: '#e5e7eb',
-    padding: 12, marginBottom: 8,
-  },
-  cardInfo: { flex: 1 },
-  cardName: { fontSize: 14, fontWeight: '600', color: '#111827' },
-  cardEmail: { fontSize: 12, color: '#6b7280', marginTop: 1 },
-  cardSub: { fontSize: 12, color: '#9ca3af', marginTop: 2 },
-  cardActions: { flexDirection: 'row', gap: 6 },
-
-  acceptBtn: {
-    backgroundColor: '#6366f1', borderRadius: 6,
-    paddingVertical: 6, paddingHorizontal: 12,
-  },
-  acceptBtnText: { color: '#fff', fontSize: 13, fontWeight: '600' },
-  declineBtn: {
-    backgroundColor: '#f3f4f6', borderRadius: 6,
-    paddingVertical: 6, paddingHorizontal: 12,
-  },
-  declineBtnText: { color: '#374151', fontSize: 13, fontWeight: '600' },
-
-  badge: { alignSelf: 'flex-start', borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2, marginTop: 4 },
-  badgeAccepted: { backgroundColor: '#dcfce7' },
-  badgePending: { backgroundColor: '#fef9c3' },
-  badgeText: { fontSize: 11, fontWeight: '600' },
-  badgeAcceptedText: { color: '#16a34a' },
-  badgePendingText: { color: '#ca8a04' },
-
-  empty: { color: '#9ca3af', fontSize: 14, textAlign: 'center', marginTop: 24 },
+  btnDisabled: { opacity: 0.55 },
+  btnPrimary: { flex: 1, backgroundColor: '#6366f1' },
+  btnPrimaryText: { color: '#fff', fontWeight: '600', fontSize: 14 },
+  btnDanger: { backgroundColor: '#fef2f2', borderWidth: 1, borderColor: '#fecaca' },
+  btnDangerText: { color: '#dc2626', fontWeight: '600', fontSize: 14 },
+  btnSecondary: { backgroundColor: '#f3f4f6', borderWidth: 1, borderColor: '#e5e7eb' },
+  btnSecondaryText: { color: '#374151', fontWeight: '600', fontSize: 14 },
 });

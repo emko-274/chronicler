@@ -1,0 +1,58 @@
+import secrets
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+
+from database import get_db
+from models import PublicLink, ActivityLog, PrivateCategory, HiddenCategory, User
+from auth import get_current_user
+
+router = APIRouter()
+
+
+@router.post("/link")
+def generate_link(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    db.query(PublicLink).filter(PublicLink.owner_id == current_user.id).delete()
+    token = secrets.token_urlsafe(12)
+    db.add(PublicLink(token=token, owner_id=current_user.id))
+    db.commit()
+    return {"token": token}
+
+
+@router.delete("/link")
+def revoke_link(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    db.query(PublicLink).filter(PublicLink.owner_id == current_user.id).delete()
+    db.commit()
+    return {"revoked": True}
+
+
+@router.get("/link")
+def get_link(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    link = db.query(PublicLink).filter(PublicLink.owner_id == current_user.id).first()
+    return {"token": link.token if link else None}
+
+
+@router.get("/{token}/info")
+def public_info(token: str, db: Session = Depends(get_db)):
+    link = db.query(PublicLink).filter(PublicLink.token == token).first()
+    if not link:
+        raise HTTPException(status_code=404, detail="Link not found")
+    owner = db.query(User).filter(User.id == link.owner_id).first()
+    return {"name": owner.name}
+
+
+@router.get("/{token}/logs")
+def public_logs(token: str, db: Session = Depends(get_db)):
+    link = db.query(PublicLink).filter(PublicLink.token == token).first()
+    if not link:
+        raise HTTPException(status_code=404, detail="Link not found")
+    excluded = (
+        {p.name for p in db.query(PrivateCategory).filter(PrivateCategory.user_id == link.owner_id).all()}
+        | {h.name for h in db.query(HiddenCategory).filter(HiddenCategory.user_id == link.owner_id).all()}
+    )
+    query = db.query(ActivityLog).filter(ActivityLog.user_id == link.owner_id)
+    if excluded:
+        query = query.filter(ActivityLog.activity_type.notin_(excluded))
+    results = query.order_by(ActivityLog.started_at.desc()).limit(500).all()
+    for log in results:
+        log.id = str(log.id)
+    return results
