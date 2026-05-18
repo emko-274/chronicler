@@ -1748,6 +1748,19 @@ export default function DashboardScreen() {
         [...data].reverse().forEach((l) => {
           if (!existing.has(l.activity_type)) { existing.add(l.activity_type); base.push(l.activity_type); }
         });
+        // Auto-assign palette colors by name so reordering doesn't shift them
+        try {
+          const colorsRaw = typeof window !== 'undefined' ? localStorage.getItem('activity-tracker:type-colors') : null;
+          const colors: Record<string, string> = colorsRaw ? JSON.parse(colorsRaw) : {};
+          let changed = false;
+          base.forEach((t, i) => {
+            if (!colors[t]) { colors[t] = TYPE_COLORS[i % TYPE_COLORS.length][0]; changed = true; }
+          });
+          if (changed && typeof window !== 'undefined') {
+            localStorage.setItem('activity-tracker:type-colors', JSON.stringify(colors));
+            setCustomTypeColors(colors);
+          }
+        } catch { /* ignore */ }
         return base;
       });
     } finally {

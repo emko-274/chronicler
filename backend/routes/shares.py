@@ -31,7 +31,7 @@ def _serialize(share: Share, my_id, db: Session) -> dict:
     }
 
 
-@router.post("/")
+@router.post("")
 def send_invite(
     body: ShareInviteRequest,
     db: Session = Depends(get_db),

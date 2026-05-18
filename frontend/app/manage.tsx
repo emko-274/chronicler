@@ -58,6 +58,10 @@ function loadTypeOrder(): string[] {
   } catch { return []; }
 }
 
+function saveTypeOrder(order: string[]) {
+  if (typeof window !== 'undefined') localStorage.setItem(ORDER_KEY, JSON.stringify(order));
+}
+
 function effectiveColor(name: string, customColors: Record<string, string>, typeOrder: string[]): string {
   if (customColors[name]) return customColors[name];
   const idx = typeOrder.indexOf(name);
@@ -93,6 +97,27 @@ export default function ManageScreen() {
     try {
       const data = await getCategories();
       setCategories(data);
+      const stored = loadTypeOrder();
+      const storedColors = loadColors();
+      const names = data.map(c => c.name);
+      const merged = [...stored, ...names.filter(n => !stored.includes(n))];
+      if (merged.length !== stored.length) {
+        setTypeOrder(merged);
+        saveTypeOrder(merged);
+      }
+      // Auto-assign palette colors by name so reordering doesn't change them
+      const newColors = { ...storedColors };
+      let changed = false;
+      merged.forEach((name, idx) => {
+        if (!newColors[name]) {
+          newColors[name] = TYPE_COLORS[idx % TYPE_COLORS.length];
+          changed = true;
+        }
+      });
+      if (changed) {
+        setCustomColors(newColors);
+        saveColors(newColors);
+      }
     } catch {
       Alert.alert('Error', 'Could not load categories.');
     } finally {

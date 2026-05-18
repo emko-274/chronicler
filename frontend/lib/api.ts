@@ -10,6 +10,18 @@ export function setApiToken(token: string | null) {
   _token = token;
 }
 
+function fixDates(obj: any): any {
+  if (typeof obj === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/.test(obj)) return obj + 'Z';
+  if (Array.isArray(obj)) return obj.map(fixDates);
+  if (obj && typeof obj === 'object') return Object.fromEntries(Object.entries(obj).map(([k, v]) => [k, fixDates(v)]));
+  return obj;
+}
+
+api.interceptors.response.use((response) => {
+  response.data = fixDates(response.data);
+  return response;
+});
+
 api.interceptors.request.use((config) => {
   if (_token) config.headers.Authorization = `Bearer ${_token}`;
   return config;

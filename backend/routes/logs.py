@@ -41,7 +41,7 @@ class ActivityLogResponse(BaseModel):
         from_attributes = True
 
 
-@router.post("/", response_model=ActivityLogResponse)
+@router.post("", response_model=ActivityLogResponse)
 def create_log(
     log: ActivityLogCreate,
     db: Session = Depends(get_db),
@@ -51,6 +51,19 @@ def create_log(
         delta = log.ended_at - log.started_at
         log.duration_minutes = int(delta.total_seconds() / 60)
 
+    if log.extra_data and log.extra_data.get('zero'):
+        from sqlalchemy import func
+        log_date = log.started_at.date()
+        new_qty = log.extra_data.get('quantity')
+        dupes = db.query(ActivityLog).filter(
+            ActivityLog.user_id == current_user.id,
+            ActivityLog.activity_type == log.activity_type,
+            func.date(ActivityLog.started_at) == log_date,
+        ).all()
+        for e in dupes:
+            if e.extra_data and e.extra_data.get('zero') and e.extra_data.get('quantity') == new_qty:
+                raise HTTPException(status_code=409, detail='An identical entry already exists for this date.')
+
     db_log = ActivityLog(**log.model_dump(), user_id=current_user.id)
     db.add(db_log)
     db.commit()
@@ -59,7 +72,7 @@ def create_log(
     return db_log
 
 
-@router.get("/", response_model=list[ActivityLogResponse])
+@router.get("", response_model=list[ActivityLogResponse])
 def get_logs(
     activity_type: Optional[str] = None,
     limit: int = 100,

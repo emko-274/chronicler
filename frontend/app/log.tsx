@@ -464,8 +464,9 @@ export default function LogScreen() {
         setActivityType(''); setEntryDate(new Date());
         setNotes(''); setShowQuantity(false); setQuantityText(''); setQuantityUnit('');
         setTags([]); setTagInput(''); setShowTags(false);
-      } catch {
-        Alert.alert('Error', 'Could not save. Is the backend running?');
+      } catch (err: any) {
+        const msg = err?.response?.data?.detail;
+        Alert.alert('Error', msg || 'Could not save. Is the backend running?');
       } finally { setSaving(false); }
       return;
     }

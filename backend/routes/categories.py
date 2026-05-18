@@ -22,7 +22,7 @@ class RenameRequest(BaseModel):
     new_name: str
 
 
-@router.get("/", response_model=List[CategoryResponse])
+@router.get("", response_model=List[CategoryResponse])
 def get_categories(
     owner_id: Optional[str] = None,
     db: Session = Depends(get_db),

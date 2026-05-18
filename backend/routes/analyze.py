@@ -202,7 +202,7 @@ class RegressionRequest(BaseModel):
 
 # ── Routes ───────────────────────────────────────────────────────────────────
 
-@router.post("/")
+@router.post("")
 def analyze(
     request: AnalyzeRequest,
     db: Session = Depends(get_db),

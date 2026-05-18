@@ -56,7 +56,7 @@ def _serialize(note: Note, db: Session, user_id=None) -> dict:
     }
 
 
-@router.get("/")
+@router.get("")
 def list_notes(
     note_type: Optional[str] = None,
     date: Optional[str] = None,
@@ -91,7 +91,7 @@ def get_daily_logs(
     return [_serialize_log(l) for l in logs]
 
 
-@router.post("/")
+@router.post("")
 def create_note(
     body: NoteCreate,
     db: Session = Depends(get_db),
