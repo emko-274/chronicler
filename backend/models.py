@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, DateTime, Integer, Text, JSON, ForeignKey, UniqueConstraint
+from sqlalchemy import Column, String, DateTime, Integer, Text, JSON, Boolean, ForeignKey, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from database import Base
 import uuid
@@ -71,6 +71,7 @@ class PublicLink(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     token = Column(String(32), unique=True, nullable=False, index=True)
     owner_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, unique=True)
+    include_notes = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 

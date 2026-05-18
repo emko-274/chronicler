@@ -1,10 +1,10 @@
 import { useState, useEffect } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet,
-  ActivityIndicator, Modal, Platform,
+  ActivityIndicator, Modal, Platform, Switch,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { getMyPublicLink, generatePublicLink, revokePublicLink } from '../lib/api';
+import { getMyPublicLink, generatePublicLink, revokePublicLink, updatePublicLinkSettings } from '../lib/api';
 
 const APP_BASE_URL = process.env.EXPO_PUBLIC_APP_URL || (
   typeof window !== 'undefined' ? window.location.origin : 'https://chronicler-ten.vercel.app'
@@ -17,6 +17,7 @@ interface Props {
 
 export default function SharePanel({ visible, onClose }: Props) {
   const [token, setToken] = useState<string | null>(null);
+  const [includeNotes, setIncludeNotes] = useState(false);
   const [loading, setLoading] = useState(true);
   const [working, setWorking] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -28,6 +29,7 @@ export default function SharePanel({ visible, onClose }: Props) {
     try {
       const data = await getMyPublicLink();
       setToken(data.token);
+      setIncludeNotes(data.include_notes ?? false);
     } finally {
       setLoading(false);
     }
@@ -70,6 +72,15 @@ export default function SharePanel({ visible, onClose }: Props) {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch { /* clipboard not available */ }
+  };
+
+  const handleToggleNotes = async (value: boolean) => {
+    setIncludeNotes(value);
+    try {
+      await updatePublicLinkSettings({ include_notes: value });
+    } catch {
+      setIncludeNotes(!value);
+    }
   };
 
   return (
@@ -116,6 +127,18 @@ export default function SharePanel({ visible, onClose }: Props) {
                       ? <ActivityIndicator size="small" color="#dc2626" />
                       : <Text style={styles.btnDangerText}>Revoke</Text>}
                   </TouchableOpacity>
+                </View>
+                <View style={styles.toggleRow}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.toggleLabel}>Include journal</Text>
+                    <Text style={styles.toggleDesc}>Share your notes and journal entries with viewers</Text>
+                  </View>
+                  <Switch
+                    value={includeNotes}
+                    onValueChange={handleToggleNotes}
+                    trackColor={{ false: '#e5e7eb', true: '#818cf8' }}
+                    thumbColor={includeNotes ? '#6366f1' : '#9ca3af'}
+                  />
                 </View>
                 <TouchableOpacity
                   style={[styles.btn, styles.btnSecondary, { marginTop: 8 }, working && styles.btnDisabled]}
@@ -172,6 +195,13 @@ const styles = StyleSheet.create({
   },
   linkText: { fontSize: 13, color: '#374151', fontFamily: Platform.OS === 'web' ? 'monospace' : undefined },
   actions: { flexDirection: 'row', gap: 8 },
+  toggleRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    marginTop: 16, paddingTop: 16,
+    borderTopWidth: 1, borderTopColor: '#e5e7eb',
+  },
+  toggleLabel: { fontSize: 14, fontWeight: '600', color: '#111827', marginBottom: 2 },
+  toggleDesc: { fontSize: 12, color: '#6b7280', lineHeight: 16 },
   btn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
     gap: 6, paddingVertical: 10, paddingHorizontal: 16, borderRadius: 8,

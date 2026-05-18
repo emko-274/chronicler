@@ -11,7 +11,7 @@ export function setApiToken(token: string | null) {
 }
 
 function fixDates(obj: any): any {
-  if (typeof obj === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/.test(obj)) return obj + 'Z';
+  if (typeof obj === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?$/.test(obj)) return obj + 'Z';
   if (Array.isArray(obj)) return obj.map(fixDates);
   if (obj && typeof obj === 'object') return Object.fromEntries(Object.entries(obj).map(([k, v]) => [k, fixDates(v)]));
   return obj;
@@ -238,11 +238,14 @@ export const revokeShare = (share_id: string): Promise<void> =>
 
 // ── Public links ───────────────────────────────────────────────────────────
 
-export const getMyPublicLink = (): Promise<{ token: string | null }> =>
+export const getMyPublicLink = (): Promise<{ token: string | null; include_notes: boolean }> =>
   api.get('/public/link').then((r) => r.data);
 
 export const generatePublicLink = (): Promise<{ token: string }> =>
   api.post('/public/link').then((r) => r.data);
+
+export const updatePublicLinkSettings = (settings: { include_notes: boolean }): Promise<{ include_notes: boolean }> =>
+  api.patch('/public/link', settings).then((r) => r.data);
 
 export const revokePublicLink = (): Promise<void> =>
   api.delete('/public/link').then((r) => r.data);
@@ -250,5 +253,19 @@ export const revokePublicLink = (): Promise<void> =>
 export const getPublicLogs = (token: string): Promise<ActivityLog[]> =>
   axios.get(`${API_BASE_URL}/public/${token}/logs`).then((r) => fixDates(r.data));
 
-export const getPublicInfo = (token: string): Promise<{ name: string }> =>
+export const getPublicInfo = (token: string): Promise<{ name: string; include_notes: boolean }> =>
   axios.get(`${API_BASE_URL}/public/${token}/info`).then((r) => r.data);
+
+export interface NoteRecord {
+  id: string;
+  user_id: string;
+  note_type: string;
+  date: string | null;
+  content: string;
+  linked_log_ids: string[];
+  created_at: string;
+  updated_at: string;
+}
+
+export const getPublicNotes = (token: string): Promise<NoteRecord[]> =>
+  axios.get(`${API_BASE_URL}/public/${token}/notes`).then((r) => r.data);
