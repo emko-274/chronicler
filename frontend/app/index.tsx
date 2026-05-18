@@ -427,14 +427,14 @@ function TimelineChart({
               <Text style={styles.zoomBtnText}>−</Text>
             </TouchableOpacity>
             <TouchableOpacity style={[styles.zoomBtn, styles.zoomBtnToday]}
-              onPress={() => scrollRef.current?.scrollTo({ x: Math.max(0, colWidth * numDays - viewportW), animated: true })}>
+              onPress={() => scrollRef.current?.scrollToEnd({ animated: false })}>
               <Text style={[styles.zoomBtnText, styles.zoomBtnTodayText]}>Today</Text>
             </TouchableOpacity>
           </>
         )}
         {isFlipped && (
           <TouchableOpacity style={[styles.zoomBtn, styles.zoomBtnToday]}
-            onPress={() => scrollRef.current?.scrollTo({ y: Math.max(0, numDays * FLIPPED_ROW_H - chartH), animated: true })}>
+            onPress={() => scrollRef.current?.scrollToEnd({ animated: false })}>
             <Text style={[styles.zoomBtnText, styles.zoomBtnTodayText]}>Today</Text>
           </TouchableOpacity>
         )}
