@@ -90,6 +90,58 @@ const md = StyleSheet.create({
   listText: { fontSize: 14, color: '#374151', lineHeight: 21, flex: 1 },
 });
 
+// ── Read-only log card (like journal's LogNoteCard, no edit button) ───────────
+
+function timeLabel(iso: string) {
+  return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+}
+
+function ReadOnlyLogCard({ log, colorMap }: { log: ActivityLog; colorMap: Map<string, string[]> }) {
+  const [expanded, setExpanded] = useState(false);
+  const color = colorMap.get(log.activity_type)?.[0] ?? '#6366f1';
+  const tags = Array.isArray(log.extra_data?.tags) ? (log.extra_data!.tags as string[]) : [];
+  const rawQty = log.extra_data?.quantity;
+  const qtyStr = typeof rawQty === 'number'
+    ? `${rawQty % 1 === 0 ? rawQty.toFixed(0) : rawQty.toFixed(1)}${log.extra_data?.unit ? ` ${log.extra_data.unit}` : ''}`
+    : null;
+  const durStr = log.duration_minutes != null ? formatDuration(log.duration_minutes) : null;
+  const summary = qtyStr ?? durStr;
+  const isTimeless = log.extra_data?.zero === true || log.extra_data?.untimed === true;
+  const timeStr = isTimeless
+    ? new Date(log.started_at).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
+    : timeLabel(log.started_at) + (log.ended_at ? ` – ${timeLabel(log.ended_at)}` : '');
+
+  return (
+    <TouchableOpacity style={styles.logCard} onPress={() => setExpanded(e => !e)} activeOpacity={0.8}>
+      <View style={styles.logCardRow}>
+        <Text style={[styles.logCardType, { color }]}>{log.activity_type}</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          {log.notes ? <Ionicons name="document-text-outline" size={13} color="#a5b4fc" /> : null}
+          <Ionicons name={expanded ? 'chevron-up' : 'chevron-forward'} size={13} color="#9ca3af" />
+        </View>
+      </View>
+      {expanded && (
+        <View style={styles.logCardAttrs}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+            <Text style={styles.logCardMeta}>{timeStr}</Text>
+            {summary != null && <Text style={styles.logCardQty}>{summary}</Text>}
+          </View>
+          {log.notes ? <Text style={styles.logCardNote}>{log.notes}</Text> : null}
+          {tags.length > 0 && (
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 4 }}>
+              {tags.map(tag => (
+                <View key={tag} style={styles.logTag}>
+                  <Text style={styles.logTagText}>{tag}</Text>
+                </View>
+              ))}
+            </View>
+          )}
+        </View>
+      )}
+    </TouchableOpacity>
+  );
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function valueLabel(log: ActivityLog): string | null {
@@ -195,7 +247,18 @@ export default function PublicView() {
     notes.filter(n => n.note_type === 'general'),
     [notes]);
 
-  // Activity types logged per day (for notes tab context)
+  // All logs grouped by day (for notes tab activity section)
+  const logsByDay = useMemo(() => {
+    const m = new Map<string, ActivityLog[]>();
+    logs.forEach(l => {
+      const d = dayKey(new Date(l.started_at));
+      if (!m.has(d)) m.set(d, []);
+      m.get(d)!.push(l);
+    });
+    return m;
+  }, [logs]);
+
+  // Activity types logged per day (for notes tab color badges)
   const logTypesByDay = useMemo(() => {
     const m = new Map<string, Set<string>>();
     logs.forEach(l => {
@@ -205,6 +268,8 @@ export default function PublicView() {
     });
     return m;
   }, [logs]);
+
+  const [logsOpenByDate, setLogsOpenByDate] = useState<Record<string, boolean>>({});
 
   const grouped = useMemo(() => {
     const filtered = logs.filter(l => visibleTypes.has(l.activity_type));
@@ -429,6 +494,8 @@ export default function PublicView() {
                     weekday: 'short', month: 'short', day: 'numeric', year: 'numeric',
                   });
                   const dayTypes = [...(logTypesByDay.get(note.date!) ?? [])];
+                  const dayLogs = logsByDay.get(note.date!) ?? [];
+                  const logsOpen = logsOpenByDate[note.date!] ?? false;
                   return (
                     <View key={note.id} style={styles.noteCard}>
                       <Text style={styles.noteDate}>{dateLabel}</Text>
@@ -442,6 +509,22 @@ export default function PublicView() {
                               </View>
                             );
                           })}
+                        </View>
+                      )}
+                      {dayLogs.length > 0 && (
+                        <View style={styles.logsSection}>
+                          <TouchableOpacity
+                            style={styles.logsToggle}
+                            onPress={() => setLogsOpenByDate(s => ({ ...s, [note.date!]: !logsOpen }))}
+                          >
+                            <Ionicons name={logsOpen ? 'chevron-down' : 'chevron-forward'} size={13} color="#9ca3af" />
+                            <Text style={styles.logsToggleText}>
+                              {dayLogs.length} activity log{dayLogs.length !== 1 ? 's' : ''}
+                            </Text>
+                          </TouchableOpacity>
+                          {logsOpen && dayLogs.map(log => (
+                            <ReadOnlyLogCard key={log.id} log={log} colorMap={colorMap} />
+                          ))}
                         </View>
                       )}
                       <MarkdownView content={note.content} />
@@ -576,4 +659,16 @@ const styles = StyleSheet.create({
   noteCardTitle: { fontSize: 15, fontWeight: '700', color: '#111827', marginBottom: 4 },
   noteCardPreview: { fontSize: 13, color: '#6b7280', lineHeight: 19, marginBottom: 4 },
   noteCardDate: { fontSize: 11, color: '#9ca3af', marginTop: 2 },
+
+  logsSection: { marginBottom: 12 },
+  logsToggle: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 4, marginBottom: 4 },
+  logsToggleText: { fontSize: 12, fontWeight: '600', color: '#9ca3af' },
+
+  logCard: { backgroundColor: '#f9fafb', borderRadius: 8, padding: 10, marginBottom: 6, borderWidth: 1, borderColor: '#e5e7eb' },
+  logCardRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
+  logCardType: { fontSize: 13, fontWeight: '600', textTransform: 'capitalize' },
+  logCardMeta: { fontSize: 11, color: '#9ca3af', marginTop: 1 },
+  logCardQty: { fontSize: 13, fontWeight: '500', color: '#374151' },
+  logCardNote: { fontSize: 12, color: '#6b7280', lineHeight: 18, marginTop: 2 },
+  logCardAttrs: { marginTop: 6, gap: 4, borderTopWidth: 1, borderTopColor: '#f3f4f6', paddingTop: 6 },
 });

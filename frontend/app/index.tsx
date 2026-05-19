@@ -75,6 +75,7 @@ function TimelineChart({
   const scrollRef = useRef<ScrollView>(null);
   const chartWrapRef = useRef<View>(null);
   const chartBodyRef = useRef<View>(null);
+  const flippedBodyRef = useRef<View>(null);
   const hideDelayRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [modalPage, setModalPage] = useState(0);
@@ -83,6 +84,7 @@ function TimelineChart({
   const [isPinching, setIsPinching] = useState(false);
   const [tooltip, setTooltip] = useState<TooltipState | null>(null);
   const [crosshairY, setCrosshairY] = useState<number | null>(null);
+  const [crosshairX, setCrosshairX] = useState<number | null>(null);
   const [isFlipped, setIsFlipped] = useState(false);
   const isFlippedRef = useRef(false);
   const [showHeatmap, setShowHeatmap] = useState(false);
@@ -121,6 +123,8 @@ function TimelineChart({
   // Reset scroll and tooltip when switching between normal / flipped view
   useEffect(() => {
     setTooltip(null);
+    setCrosshairX(null);
+    setCrosshairY(null);
     scrollXRef.current = 0;
     scrollYRef.current = 0;
     // Reset snap states to large sentinels so they clamp to max-scroll (most recent
@@ -172,11 +176,19 @@ function TimelineChart({
     return () => document.removeEventListener('wheel', handler);
   }, []);
 
-  // Web: crosshair line tracks mouse Y over the chart body (normal view only)
+  // Web: crosshair tracks mouse Y (normal) or X (flipped) over the chart body
   useEffect(() => {
     if (Platform.OS !== 'web') return;
     const onMove = (e: MouseEvent) => {
-      if (isFlippedRef.current) return;
+      if (isFlippedRef.current) {
+        const el = flippedBodyRef.current as unknown as HTMLElement;
+        if (!el) { setCrosshairX(null); return; }
+        const rect = el.getBoundingClientRect();
+        if (e.clientX < rect.left + TIME_LABEL_W || e.clientX > rect.right ||
+            e.clientY < rect.top || e.clientY > rect.bottom) { setCrosshairX(null); return; }
+        setCrosshairX(e.clientX - rect.left - TIME_LABEL_W);
+        return;
+      }
       const el = chartBodyRef.current as unknown as HTMLElement;
       if (!el) return;
       const rect = el.getBoundingClientRect();
@@ -186,7 +198,7 @@ function TimelineChart({
     };
     document.addEventListener('mousemove', onMove);
     return () => document.removeEventListener('mousemove', onMove);
-  }, []);
+  }, [chartH]);
 
   // Native: 2-finger pinch adjusts column width
   const pinchState = useRef<{ initialDistance: number; initialColW: number } | null>(null);
@@ -386,6 +398,8 @@ function TimelineChart({
       {isFlipped ? (
         // ── Flipped: dates = rows (Y), time-of-day = columns (X) ─────────────
         <View
+          ref={flippedBodyRef}
+          style={{ position: 'relative' }}
           onLayout={e => setFlippedW(e.nativeEvent.layout.width - TIME_LABEL_W)}
         >
           {/* Pinned time-of-day header */}
@@ -410,7 +424,13 @@ function TimelineChart({
             onScroll={e => setScrollYSnap(e.nativeEvent.contentOffset.y)}
             scrollEventThrottle={100}>
             {days.map((day, rowIdx) => {
-              const entries = (byDay.get(day) ?? []).filter(l => visibleTypes.has(l.activity_type));
+              const entries = (byDay.get(day) ?? [])
+                .filter(l => visibleTypes.has(l.activity_type))
+                .sort((a, b) => {
+                  const ai = typeOrder.indexOf(a.activity_type);
+                  const bi = typeOrder.indexOf(b.activity_type);
+                  return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
+                });
               const d = new Date(day + 'T12:00:00');
               return (
                 <View key={day} style={{ flexDirection: 'row', height: FLIPPED_ROW_H }}>
@@ -501,6 +521,22 @@ function TimelineChart({
               );
             })}
           </ScrollView>
+          {crosshairX !== null && (
+            <View pointerEvents="none" style={{ position: 'absolute', top: 0, height: DATE_LABEL_H + chartH, left: 0, right: 0 }}>
+              <View style={{ position: 'absolute', top: 0, bottom: 0, left: TIME_LABEL_W + crosshairX - 0.5, width: 1, backgroundColor: 'rgba(99,102,241,0.45)' }} />
+              <View style={{ position: 'absolute', top: 2, left: TIME_LABEL_W + 2, backgroundColor: '#6366f1', borderRadius: 3, paddingHorizontal: 4, paddingVertical: 1 }}>
+                <Text style={{ fontSize: 9, color: '#fff', fontWeight: '600' }}>
+                  {(() => {
+                    const totalMins = Math.round((crosshairX / flippedW) * 24 * 60);
+                    const h = Math.min(23, Math.floor(totalMins / 60));
+                    const m = totalMins % 60;
+                    const dh = h % 12 === 0 ? 12 : h % 12;
+                    return `${dh}:${m.toString().padStart(2, '0')} ${h >= 12 ? 'pm' : 'am'}`;
+                  })()}
+                </Text>
+              </View>
+            </View>
+          )}
         </View>
       ) : (
         // ── Normal: dates = columns (X), time-of-day = rows (Y) ──────────────
