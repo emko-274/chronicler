@@ -19,6 +19,7 @@ import { Svg, Rect, Text as SvgText, Line, G, Circle, Path } from 'react-native-
 import { Ionicons } from '@expo/vector-icons';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { getLogs, deleteLog, ActivityLog } from '@/lib/api';
+import { getItem, setItem } from '@/lib/storage';
 import SharePanel from '@/components/SharePanel';
 import EditLogModal from '@/components/EditLogModal';
 import { ActivityChart } from '@/components/ActivityChart';
@@ -1164,12 +1165,7 @@ export default function DashboardScreen() {
   const [loading, setLoading] = useState(true);
   const [visibleTypes, setVisibleTypes] = useState<Set<string>>(new Set());
   const [typeOrder, setTypeOrder] = useState<string[]>([]);
-  const [customTypeColors, setCustomTypeColors] = useState<Record<string, string>>(() => {
-    try {
-      const raw = typeof window !== 'undefined' ? localStorage.getItem('activity-tracker:type-colors') : null;
-      return raw ? JSON.parse(raw) : {};
-    } catch { return {}; }
-  });
+  const [customTypeColors, setCustomTypeColors] = useState<Record<string, string>>({});
   const [editingLog, setEditingLog] = useState<ActivityLog | null>(null);
   const [collapsedCharts, setCollapsedCharts] = useState<Set<string>>(new Set());
 
@@ -1229,42 +1225,38 @@ export default function DashboardScreen() {
         return next;
       });
       // Restore saved order, then append any new types not yet in the saved list
+      const [savedOrderRaw, savedColorsRaw] = await Promise.all([
+        getItem('activity-tracker:type-order'),
+        getItem('activity-tracker:type-colors'),
+      ]);
+      const savedOrder: string[] = savedOrderRaw ? JSON.parse(savedOrderRaw) : [];
+      const colors: Record<string, string> = savedColorsRaw ? JSON.parse(savedColorsRaw) : {};
+      setCustomTypeColors(colors);
       setTypeOrder((prev) => {
-        const savedRaw = typeof window !== 'undefined' ? localStorage.getItem('activity-tracker:type-order') : null;
-        const saved: string[] = savedRaw ? JSON.parse(savedRaw) : prev;
+        const base = savedOrder.length ? savedOrder : prev;
         const allTypes = new Set(data.map(l => l.activity_type));
-        const base = saved.filter(t => allTypes.has(t));
-        const existing = new Set(base);
+        const filtered = base.filter(t => allTypes.has(t));
+        const existing = new Set(filtered);
         [...data].reverse().forEach((l) => {
-          if (!existing.has(l.activity_type)) { existing.add(l.activity_type); base.push(l.activity_type); }
+          if (!existing.has(l.activity_type)) { existing.add(l.activity_type); filtered.push(l.activity_type); }
         });
-        // Auto-assign palette colors by name so reordering doesn't shift them
-        try {
-          const colorsRaw = typeof window !== 'undefined' ? localStorage.getItem('activity-tracker:type-colors') : null;
-          const colors: Record<string, string> = colorsRaw ? JSON.parse(colorsRaw) : {};
-          let changed = false;
-          base.forEach((t, i) => {
-            if (!colors[t]) { colors[t] = TYPE_COLORS[i % TYPE_COLORS.length][0]; changed = true; }
-          });
-          if (changed && typeof window !== 'undefined') {
-            localStorage.setItem('activity-tracker:type-colors', JSON.stringify(colors));
-            setCustomTypeColors(colors);
-          }
-        } catch { /* ignore */ }
-        return base;
+        // Auto-assign palette colors for any new types
+        let changed = false;
+        filtered.forEach((t, i) => {
+          if (!colors[t]) { colors[t] = TYPE_COLORS[i % TYPE_COLORS.length][0]; changed = true; }
+        });
+        if (changed) {
+          setItem('activity-tracker:type-colors', JSON.stringify(colors));
+          setCustomTypeColors({ ...colors });
+        }
+        return filtered;
       });
     } finally {
       setLoading(false);
     }
   };
 
-  useFocusEffect(useCallback(() => {
-    fetchLogs();
-    try {
-      const raw = typeof window !== 'undefined' ? localStorage.getItem('activity-tracker:type-colors') : null;
-      setCustomTypeColors(raw ? JSON.parse(raw) : {});
-    } catch { /* ignore */ }
-  }, []));
+  useFocusEffect(useCallback(() => { fetchLogs(); }, []));
 
   useEffect(() => { fetchLogs(); }, []);
 
@@ -1353,7 +1345,7 @@ export default function DashboardScreen() {
               onToggle={toggleType}
               onReorder={(order) => {
                 setTypeOrder(order);
-                if (typeof window !== 'undefined') localStorage.setItem('activity-tracker:type-order', JSON.stringify(order));
+                setItem('activity-tracker:type-order', JSON.stringify(order));
               }}
             />
 
