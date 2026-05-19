@@ -104,7 +104,7 @@ export function PublicTimeline({
   const chartWrapRef = useRef<View>(null);
   const chartBodyRef = useRef<View>(null);
   const flippedBodyRef = useRef<View>(null);
-  const hideDelayRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
 
   const [expanded, setExpanded] = useState(false);
   const [modalPage, setModalPage] = useState(0);
@@ -164,13 +164,7 @@ export function PublicTimeline({
     }, 50);
   }, [isFlipped]);
 
-  const hideTipDelayed = () => {
-    if (hideDelayRef.current) clearTimeout(hideDelayRef.current);
-    hideDelayRef.current = setTimeout(() => setTooltip(null), 800);
-  };
-  const cancelHide = () => {
-    if (hideDelayRef.current) clearTimeout(hideDelayRef.current);
-  };
+
 
   const handleScroll = (e: any) => {
     const x = e.nativeEvent.contentOffset.x;
@@ -437,7 +431,7 @@ export function PublicTimeline({
                         setTooltip({ logs: overlapping.length > 0 ? overlapping : [log], barX, barY: 0, barH: FLIPPED_ROW_H });
                       };
                       const tipProps = Platform.OS === 'web'
-                        ? { onMouseEnter: showTip, onMouseLeave: hideTipDelayed }
+                        ? { onMouseEnter: showTip, onMouseLeave: () => setTooltip(null) }
                         : { onPressIn: showTip, onPressOut: () => setTooltip(null) };
                       if (log.ended_at) {
                         const end = new Date(log.ended_at);
@@ -461,7 +455,7 @@ export function PublicTimeline({
           {crosshairX !== null && (
             <View pointerEvents="none" style={{ position: 'absolute', top: 0, height: DATE_LABEL_H + chartH, left: 0, right: 0 }}>
               <View style={{ position: 'absolute', top: 0, bottom: 0, left: TIME_LABEL_W + crosshairX - 0.5, width: 1, backgroundColor: 'rgba(99,102,241,0.45)' }} />
-              <View style={{ position: 'absolute', top: 2, left: TIME_LABEL_W + 2, backgroundColor: '#6366f1', borderRadius: 3, paddingHorizontal: 4, paddingVertical: 1 }}>
+              <View style={{ position: 'absolute', top: 2, left: crosshairX > flippedW - 44 ? TIME_LABEL_W + crosshairX - 40 : TIME_LABEL_W + crosshairX + 4, backgroundColor: '#6366f1', borderRadius: 3, paddingHorizontal: 4, paddingVertical: 1 }}>
                 <Text style={{ fontSize: 9, color: '#fff', fontWeight: '600' }}>
                   {(() => {
                     const totalMins = Math.round((crosshairX / flippedW) * 24 * 60);
@@ -553,7 +547,7 @@ export function PublicTimeline({
                           setTooltip({ logs: overlapping.length > 0 ? overlapping : [log], barX, barY, barH });
                         };
                         const tipProps = Platform.OS === 'web'
-                          ? { onMouseEnter: showTip, onMouseLeave: hideTipDelayed }
+                          ? { onMouseEnter: showTip, onMouseLeave: () => setTooltip(null) }
                           : { onPressIn: showTip, onPressOut: () => setTooltip(null) };
                         if (log.ended_at) {
                           const end = new Date(log.ended_at);
@@ -655,7 +649,7 @@ export function PublicTimeline({
             return (
               <View style={[s.tipOverlay, { left: overlayLeft, top: overlayTop }]}
                 // @ts-ignore
-                onMouseEnter={cancelHide} onMouseLeave={() => setTooltip(null)}
+                onMouseLeave={() => setTooltip(null)}
               >
                 {tooltip.logs.map((tlog, ei) => {
                   const isTimeless = tlog.extra_data?.zero === true || tlog.extra_data?.untimed === true;
