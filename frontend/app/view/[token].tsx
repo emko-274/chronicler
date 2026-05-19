@@ -14,8 +14,83 @@ import {
   TYPE_COLORS, DEFAULT_COL_W, DEFAULT_HISTORY,
   dayKey, formatDuration, formatTimeRange, lightenHex,
 } from '@/lib/chartUtils';
+import { Ionicons } from '@expo/vector-icons';
 
-type Tab = 'feed' | 'charts' | 'timeline' | 'notes';
+type Tab = 'stream' | 'charts' | 'notes';
+type NoteSubTab = 'daily' | 'general';
+
+// ── Markdown renderer (read-only) ─────────────────────────────────────────────
+
+function parseInline(text: string, baseStyle: object): React.ReactNode {
+  const parts: React.ReactNode[] = [];
+  let remaining = text;
+  let key = 0;
+  while (remaining.length > 0) {
+    const bi = remaining.search(/\*\*.+?\*\*/);
+    const ii = remaining.search(/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/);
+    if (bi === -1 && ii === -1) { parts.push(remaining); break; }
+    const useBold = bi !== -1 && (ii === -1 || bi <= ii);
+    if (useBold) {
+      if (bi > 0) parts.push(remaining.slice(0, bi));
+      const m = remaining.slice(bi).match(/\*\*(.+?)\*\*/);
+      if (!m) { parts.push(remaining); break; }
+      parts.push(<Text key={key++} style={[baseStyle, { fontWeight: '700' }]}>{m[1]}</Text>);
+      remaining = remaining.slice(bi + m[0].length);
+    } else {
+      if (ii > 0) parts.push(remaining.slice(0, ii));
+      const m = remaining.slice(ii).match(/\*(.+?)\*/);
+      if (!m) { parts.push(remaining); break; }
+      parts.push(<Text key={key++} style={[baseStyle, { fontStyle: 'italic' }]}>{m[1]}</Text>);
+      remaining = remaining.slice(ii + m[0].length);
+    }
+  }
+  if (parts.length === 0) return null;
+  if (parts.length === 1 && typeof parts[0] === 'string') return <Text style={baseStyle}>{parts[0]}</Text>;
+  return <Text style={baseStyle}>{parts}</Text>;
+}
+
+function MarkdownView({ content }: { content: string }) {
+  if (!content.trim()) return null;
+  return (
+    <View style={{ gap: 3 }}>
+      {content.split('\n').map((line, i) => {
+        if (line.startsWith('# '))  return <Text key={i} style={md.h1}>{line.slice(2)}</Text>;
+        if (line.startsWith('## ')) return <Text key={i} style={md.h2}>{line.slice(3)}</Text>;
+        if (line.startsWith('### ')) return <Text key={i} style={md.h3}>{line.slice(4)}</Text>;
+        if (line === '---') return <View key={i} style={md.hr} />;
+        if (line === '') return <View key={i} style={{ height: 6 }} />;
+        const bulletMatch = line.match(/^[-*] (.+)/);
+        if (bulletMatch) return (
+          <View key={i} style={md.listRow}>
+            <Text style={md.listDot}>•</Text>
+            <Text style={md.listText}>{parseInline(bulletMatch[1], md.listText)}</Text>
+          </View>
+        );
+        const numMatch = line.match(/^(\d+)\. (.+)/);
+        if (numMatch) return (
+          <View key={i} style={md.listRow}>
+            <Text style={md.listDot}>{numMatch[1]}.</Text>
+            <Text style={md.listText}>{parseInline(numMatch[2], md.listText)}</Text>
+          </View>
+        );
+        return <Text key={i} style={md.body}>{parseInline(line, md.body)}</Text>;
+      })}
+    </View>
+  );
+}
+
+const md = StyleSheet.create({
+  h1:      { fontSize: 18, fontWeight: '800', color: '#111827', marginTop: 8, marginBottom: 2 },
+  h2:      { fontSize: 15, fontWeight: '700', color: '#1f2937', marginTop: 6 },
+  h3:      { fontSize: 13, fontWeight: '700', color: '#374151', marginTop: 4 },
+  body:    { fontSize: 14, color: '#374151', lineHeight: 21 },
+  hr:      { height: 1, backgroundColor: '#e5e7eb', marginVertical: 8 },
+  listRow: { flexDirection: 'row', gap: 8, paddingLeft: 4 },
+  listDot: { fontSize: 14, color: '#6b7280', minWidth: 18 },
+  listText: { fontSize: 14, color: '#374151', lineHeight: 21, flex: 1 },
+});
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
 function valueLabel(log: ActivityLog): string | null {
   if (log.duration_minutes) return formatDuration(log.duration_minutes);
@@ -27,6 +102,8 @@ function valueLabel(log: ActivityLog): string | null {
   return null;
 }
 
+// ── Main screen ───────────────────────────────────────────────────────────────
+
 export default function PublicView() {
   const { token } = useLocalSearchParams<{ token: string }>();
   const [ownerName, setOwnerName] = useState('');
@@ -37,8 +114,10 @@ export default function PublicView() {
   const [error, setError] = useState('');
   const [visibleTypes, setVisibleTypes] = useState<Set<string>>(new Set());
   const [typeOrder, setTypeOrder] = useState<string[]>([]);
-  const [activeTab, setActiveTab] = useState<Tab>('feed');
+  const [activeTab, setActiveTab] = useState<Tab>('stream');
+  const [noteSubTab, setNoteSubTab] = useState<NoteSubTab>('daily');
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const [reordering, setReordering] = useState(false);
 
   const [colWidth, setColWidth] = useState(DEFAULT_COL_W);
   const [numDays, setNumDays] = useState(DEFAULT_HISTORY);
@@ -76,17 +155,13 @@ export default function PublicView() {
         setLogs(data);
         const seen = new Set<string>();
         const order: string[] = [];
-        data.forEach((l) => {
-          if (!seen.has(l.activity_type)) { seen.add(l.activity_type); order.push(l.activity_type); }
-        });
+        data.forEach(l => { if (!seen.has(l.activity_type)) { seen.add(l.activity_type); order.push(l.activity_type); } });
         setTypeOrder(order);
         setVisibleTypes(new Set(order));
-        if (info.include_notes) {
-          return getPublicNotes(token);
-        }
+        if (info.include_notes) return getPublicNotes(token);
         return [];
       })
-      .then((noteData) => setNotes(noteData as NoteRecord[]))
+      .then(noteData => setNotes(noteData as NoteRecord[]))
       .catch(() => setError('This link is invalid or has been revoked.'))
       .finally(() => setLoading(false));
   }, [token]);
@@ -100,16 +175,55 @@ export default function PublicView() {
     return m;
   }, [typeOrder]);
 
+  // Notes indexed by date for stream inline notes
+  const notesByDate = useMemo(() => {
+    const m = new Map<string, NoteRecord[]>();
+    notes.forEach(n => {
+      if (n.note_type === 'daily' && n.date) {
+        if (!m.has(n.date)) m.set(n.date, []);
+        m.get(n.date)!.push(n);
+      }
+    });
+    return m;
+  }, [notes]);
+
+  const dailyNotes = useMemo(() =>
+    notes.filter(n => n.note_type === 'daily' && n.date).sort((a, b) => b.date!.localeCompare(a.date!)),
+    [notes]);
+
+  const generalNotes = useMemo(() =>
+    notes.filter(n => n.note_type === 'general'),
+    [notes]);
+
+  // Activity types logged per day (for notes tab context)
+  const logTypesByDay = useMemo(() => {
+    const m = new Map<string, Set<string>>();
+    logs.forEach(l => {
+      const d = dayKey(new Date(l.started_at));
+      if (!m.has(d)) m.set(d, new Set());
+      m.get(d)!.add(l.activity_type);
+    });
+    return m;
+  }, [logs]);
+
   const grouped = useMemo(() => {
-    const filtered = logs.filter((l) => visibleTypes.has(l.activity_type));
+    const filtered = logs.filter(l => visibleTypes.has(l.activity_type));
     const byDay = new Map<string, ActivityLog[]>();
-    filtered.forEach((l) => {
+    filtered.forEach(l => {
       const key = dayKey(new Date(l.started_at));
       if (!byDay.has(key)) byDay.set(key, []);
       byDay.get(key)!.push(l);
     });
     return [...byDay.entries()].sort(([a], [b]) => b.localeCompare(a)).slice(0, 90);
   }, [logs, visibleTypes]);
+
+  function moveType(idx: number, dir: -1 | 1) {
+    const next = idx + dir;
+    if (next < 0 || next >= typeOrder.length) return;
+    const arr = [...typeOrder];
+    [arr[idx], arr[next]] = [arr[next], arr[idx]];
+    setTypeOrder(arr);
+  }
 
   if (loading) return (
     <View style={styles.center}>
@@ -124,11 +238,12 @@ export default function PublicView() {
   );
 
   const tabs: { key: Tab; label: string }[] = [
-    { key: 'feed', label: 'Feed' },
+    { key: 'stream', label: 'Stream' },
     { key: 'charts', label: 'Charts' },
-    { key: 'timeline', label: 'Timeline' },
-    ...(includeNotes ? [{ key: 'notes' as Tab, label: 'Journal' }] : []),
+    ...(includeNotes ? [{ key: 'notes' as Tab, label: 'Notes' }] : []),
   ];
+
+  const visibleTypeList = typeOrder.filter(t => visibleTypes.has(t));
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
@@ -140,30 +255,52 @@ export default function PublicView() {
         </View>
       </View>
 
-      {/* Type filter chips */}
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
-        {typeOrder.map((type) => {
-          const active = visibleTypes.has(type);
-          const color = colorMap.get(type)?.[0] ?? '#6366f1';
-          return (
-            <TouchableOpacity
-              key={type}
-              onPress={() => {
-                const next = new Set(visibleTypes);
-                if (next.has(type)) next.delete(type); else next.add(type);
-                setVisibleTypes(next);
-              }}
-              style={[styles.chip, active ? { backgroundColor: color } : styles.chipOff]}
-            >
-              <Text style={[styles.chipText, !active && styles.chipTextOff]}>{type}</Text>
-            </TouchableOpacity>
-          );
-        })}
-      </ScrollView>
+      {/* Type filter chips + reorder */}
+      <View style={styles.chipSection}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
+          {typeOrder.map((type, idx) => {
+            const active = visibleTypes.has(type);
+            const color = colorMap.get(type)?.[0] ?? '#6366f1';
+            if (reordering) {
+              return (
+                <View key={type} style={[styles.chip, active ? { backgroundColor: color } : styles.chipOff, { flexDirection: 'row', alignItems: 'center', gap: 2 }]}>
+                  <TouchableOpacity onPress={() => moveType(idx, -1)} disabled={idx === 0} hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}>
+                    <Ionicons name="chevron-back" size={12} color={idx === 0 ? 'rgba(255,255,255,0.25)' : (active ? '#fff' : '#9ca3af')} />
+                  </TouchableOpacity>
+                  <Text style={[styles.chipText, !active && styles.chipTextOff]}>{type}</Text>
+                  <TouchableOpacity onPress={() => moveType(idx, 1)} disabled={idx === typeOrder.length - 1} hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}>
+                    <Ionicons name="chevron-forward" size={12} color={idx === typeOrder.length - 1 ? 'rgba(255,255,255,0.25)' : (active ? '#fff' : '#9ca3af')} />
+                  </TouchableOpacity>
+                </View>
+              );
+            }
+            return (
+              <TouchableOpacity
+                key={type}
+                onPress={() => {
+                  const next = new Set(visibleTypes);
+                  if (next.has(type)) next.delete(type); else next.add(type);
+                  setVisibleTypes(next);
+                }}
+                style={[styles.chip, active ? { backgroundColor: color } : styles.chipOff]}
+              >
+                <Text style={[styles.chipText, !active && styles.chipTextOff]}>{type}</Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+        <TouchableOpacity
+          style={[styles.reorderBtn, reordering && styles.reorderBtnOn]}
+          onPress={() => setReordering(r => !r)}
+          hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+        >
+          <Ionicons name={reordering ? 'checkmark' : 'layers-outline'} size={14} color={reordering ? '#fff' : '#6366f1'} />
+        </TouchableOpacity>
+      </View>
 
       {/* Tab bar */}
       <View style={styles.tabBar}>
-        {tabs.map((t) => (
+        {tabs.map(t => (
           <TouchableOpacity
             key={t.key}
             onPress={() => setActiveTab(t.key)}
@@ -174,23 +311,25 @@ export default function PublicView() {
         ))}
       </View>
 
-      {/* Feed tab */}
-      {activeTab === 'feed' && (
+      {/* ── Stream ── */}
+      {activeTab === 'stream' && (
         grouped.length === 0 ? (
           <Text style={styles.empty}>No activity to show.</Text>
         ) : (
           grouped.map(([dayStr, dayLogs]) => {
             const date = new Date(dayStr + 'T12:00:00');
             const label = date.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+            const dayNotes = includeNotes ? (notesByDate.get(dayStr) ?? []) : [];
             return (
               <View key={dayStr} style={styles.dayBlock}>
                 <Text style={styles.dayLabel}>{label}</Text>
-                {dayLogs.map((log) => {
+                {dayLogs.map(log => {
                   const color = colorMap.get(log.activity_type)?.[0] ?? '#6366f1';
                   const val = valueLabel(log);
                   const timeStr = log.ended_at
                     ? formatTimeRange(log.started_at, log.ended_at)
                     : formatTimeRange(log.started_at, null);
+                  const tags = Array.isArray(log.extra_data?.tags) ? (log.extra_data!.tags as string[]) : [];
                   return (
                     <View key={log.id} style={styles.logRow}>
                       <View style={[styles.dot, { backgroundColor: color }]} />
@@ -201,23 +340,52 @@ export default function PublicView() {
                         </View>
                         <Text style={styles.logTime}>{timeStr}</Text>
                         {log.notes ? <Text style={styles.logNotes}>{log.notes}</Text> : null}
+                        {tags.length > 0 && (
+                          <View style={styles.logTagRow}>
+                            {tags.map(tag => (
+                              <View key={tag} style={styles.logTag}>
+                                <Text style={styles.logTagText}>{tag}</Text>
+                              </View>
+                            ))}
+                          </View>
+                        )}
                       </View>
                     </View>
                   );
                 })}
+                {dayNotes.map(note => (
+                  <View key={note.id} style={styles.inlineNote}>
+                    <Text style={styles.inlineNoteText}>{note.content}</Text>
+                  </View>
+                ))}
               </View>
             );
           })
         )
       )}
 
-      {/* Charts tab */}
+      {/* ── Charts ── */}
       {activeTab === 'charts' && (
-        typeOrder.filter((t) => visibleTypes.has(t)).length === 0 ? (
-          <Text style={styles.empty}>No activity types visible.</Text>
-        ) : (
-          <View style={{ gap: 12 }}>
-            {typeOrder.filter((t) => visibleTypes.has(t)).map((type) => (
+        <View style={{ gap: 12 }}>
+          <PublicTimeline
+            logs={logs}
+            colorMap={colorMap}
+            visibleTypes={visibleTypes}
+            typeOrder={typeOrder}
+            colWidth={colWidth}
+            setColWidth={setColWidth}
+            numDays={numDays}
+            setNumDays={setNumDays}
+            colWidthRef={colWidthRef}
+            numDaysRef={numDaysRef}
+            onScrollX={x => syncScrollX(x, 'timeline')}
+            registerScroll={ref => scrollNodeRefs.current.set('timeline', ref)}
+            charts={visibleTypeList}
+          />
+          {visibleTypeList.length === 0 ? (
+            <Text style={styles.empty}>No activity types visible.</Text>
+          ) : (
+            visibleTypeList.map(type => (
               <ActivityChart
                 key={type}
                 type={type}
@@ -225,48 +393,88 @@ export default function PublicView() {
                 colorPair={colorMap.get(type) ?? TYPE_COLORS[0]}
                 colWidth={colWidth}
                 numDays={numDays}
-                onScrollX={(x) => syncScrollX(x, type)}
-                registerScroll={(ref) => scrollNodeRefs.current.set(type, ref)}
+                onScrollX={x => syncScrollX(x, type)}
+                registerScroll={ref => scrollNodeRefs.current.set(type, ref)}
                 collapsed={collapsed[type] ?? false}
-                onToggleCollapsed={() => setCollapsed((c) => ({ ...c, [type]: !c[type] }))}
+                onToggleCollapsed={() => setCollapsed(c => ({ ...c, [type]: !c[type] }))}
               />
+            ))
+          )}
+        </View>
+      )}
+
+      {/* ── Notes ── */}
+      {activeTab === 'notes' && includeNotes && (
+        <View>
+          {/* Sub-tab bar */}
+          <View style={styles.noteTabBar}>
+            {(['daily', 'general'] as NoteSubTab[]).map(st => (
+              <TouchableOpacity key={st} style={[styles.noteTabBtn, noteSubTab === st && styles.noteTabBtnOn]}
+                onPress={() => setNoteSubTab(st)}>
+                <Text style={[styles.noteTabText, noteSubTab === st && styles.noteTabTextOn]}>
+                  {st === 'daily' ? 'Daily' : 'General'}
+                </Text>
+              </TouchableOpacity>
             ))}
           </View>
-        )
-      )}
 
-      {/* Timeline tab */}
-      {activeTab === 'timeline' && (
-        <PublicTimeline
-          logs={logs}
-          colorMap={colorMap}
-          visibleTypes={visibleTypes}
-          colWidth={colWidth}
-          numDays={numDays}
-          onScrollX={(x) => syncScrollX(x, 'timeline')}
-          registerScroll={(ref) => scrollNodeRefs.current.set('timeline', ref)}
-        />
-      )}
+          {/* Daily notes */}
+          {noteSubTab === 'daily' && (
+            dailyNotes.length === 0 ? (
+              <Text style={styles.empty}>No daily journal entries to show.</Text>
+            ) : (
+              <View style={{ gap: 12, marginTop: 4 }}>
+                {dailyNotes.map(note => {
+                  const dateLabel = new Date(note.date! + 'T12:00:00').toLocaleDateString(undefined, {
+                    weekday: 'short', month: 'short', day: 'numeric', year: 'numeric',
+                  });
+                  const dayTypes = [...(logTypesByDay.get(note.date!) ?? [])];
+                  return (
+                    <View key={note.id} style={styles.noteCard}>
+                      <Text style={styles.noteDate}>{dateLabel}</Text>
+                      {dayTypes.length > 0 && (
+                        <View style={styles.noteBadgeRow}>
+                          {dayTypes.map(t => {
+                            const color = colorMap.get(t)?.[0] ?? '#6366f1';
+                            return (
+                              <View key={t} style={[styles.noteBadge, { backgroundColor: color + '22', borderColor: color + '55' }]}>
+                                <Text style={[styles.noteBadgeText, { color }]}>{t}</Text>
+                              </View>
+                            );
+                          })}
+                        </View>
+                      )}
+                      <MarkdownView content={note.content} />
+                    </View>
+                  );
+                })}
+              </View>
+            )
+          )}
 
-      {/* Notes/Journal tab */}
-      {activeTab === 'notes' && includeNotes && (
-        notes.length === 0 ? (
-          <Text style={styles.empty}>No journal entries to show.</Text>
-        ) : (
-          <View style={{ gap: 12 }}>
-            {notes.map((note) => {
-              const dateLabel = note.date
-                ? new Date(note.date + 'T12:00:00').toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })
-                : 'General';
-              return (
-                <View key={note.id} style={styles.noteCard}>
-                  <Text style={styles.noteDate}>{dateLabel}</Text>
-                  <Text style={styles.noteContent}>{note.content}</Text>
-                </View>
-              );
-            })}
-          </View>
-        )
+          {/* General notes */}
+          {noteSubTab === 'general' && (
+            generalNotes.length === 0 ? (
+              <Text style={styles.empty}>No general notes to show.</Text>
+            ) : (
+              <View style={{ gap: 12, marginTop: 4 }}>
+                {generalNotes.map(note => {
+                  const title = note.content.split('\n')[0].replace(/^#+\s/, '') || 'Untitled';
+                  const preview = note.content.replace(/#+\s|[-*]\s|\*\*/g, '').split('\n').filter(Boolean).slice(1, 3).join(' ');
+                  const updatedDate = note.updated_at.slice(0, 10);
+                  const updated = new Date(updatedDate + 'T12:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+                  return (
+                    <View key={note.id} style={styles.noteCard}>
+                      <Text style={styles.noteCardTitle}>{title}</Text>
+                      {preview ? <Text style={styles.noteCardPreview} numberOfLines={2}>{preview}</Text> : null}
+                      <Text style={styles.noteCardDate}>{updated}</Text>
+                    </View>
+                  );
+                })}
+              </View>
+            )
+          )}
+        </View>
       )}
     </ScrollView>
   );
@@ -283,11 +491,17 @@ const styles = StyleSheet.create({
   badge: { backgroundColor: '#eef2ff', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 },
   badgeText: { fontSize: 11, fontWeight: '600', color: '#6366f1' },
 
-  chipRow: { paddingBottom: 14, gap: 6 },
+  chipSection: { flexDirection: 'row', alignItems: 'center', marginBottom: 14, gap: 8 },
+  chipRow: { gap: 6 },
   chip: { borderRadius: 20, paddingHorizontal: 12, paddingVertical: 6 },
   chipOff: { backgroundColor: '#f3f4f6', borderWidth: 1, borderColor: '#e5e7eb' },
   chipText: { fontSize: 13, fontWeight: '600', color: '#fff' },
   chipTextOff: { color: '#6b7280' },
+  reorderBtn: {
+    width: 30, height: 30, borderRadius: 15, borderWidth: 1, borderColor: '#6366f1',
+    alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+  },
+  reorderBtnOn: { backgroundColor: '#6366f1' },
 
   tabBar: {
     flexDirection: 'row', backgroundColor: '#fff',
@@ -324,11 +538,42 @@ const styles = StyleSheet.create({
   logValue: { fontSize: 13, color: '#374151' },
   logTime: { fontSize: 11, color: '#9ca3af', marginTop: 1 },
   logNotes: { fontSize: 12, color: '#9ca3af', marginTop: 2 },
+  logTagRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 4 },
+  logTag: { backgroundColor: '#eef2ff', borderRadius: 10, paddingHorizontal: 7, paddingVertical: 2 },
+  logTagText: { fontSize: 11, color: '#4f46e5', fontWeight: '500' },
+
+  inlineNote: {
+    marginHorizontal: 14, marginVertical: 10,
+    backgroundColor: '#fefce8', borderRadius: 8,
+    borderWidth: 1, borderColor: '#fef08a',
+    paddingHorizontal: 12, paddingVertical: 8,
+  },
+  inlineNoteText: { fontSize: 13, color: '#854d0e', lineHeight: 18 },
+
+  noteTabBar: {
+    flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: '#e5e7eb',
+    backgroundColor: '#fff', marginBottom: 4,
+  },
+  noteTabBtn: {
+    paddingHorizontal: 16, paddingVertical: 10,
+    borderBottomWidth: 2, borderBottomColor: 'transparent',
+  },
+  noteTabBtnOn: { borderBottomColor: '#6366f1' },
+  noteTabText: { fontSize: 14, fontWeight: '600', color: '#9ca3af' },
+  noteTabTextOn: { color: '#6366f1' },
 
   noteCard: {
     backgroundColor: '#fff', borderRadius: 10, borderWidth: 1,
     borderColor: '#e5e7eb', padding: 14,
   },
-  noteDate: { fontSize: 11, fontWeight: '700', color: '#6b7280', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 },
-  noteContent: { fontSize: 14, color: '#374151', lineHeight: 20 },
+  noteDate: {
+    fontSize: 11, fontWeight: '700', color: '#6b7280',
+    textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8,
+  },
+  noteBadgeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginBottom: 10 },
+  noteBadge: { borderRadius: 10, borderWidth: 1, paddingHorizontal: 8, paddingVertical: 2 },
+  noteBadgeText: { fontSize: 11, fontWeight: '600' },
+  noteCardTitle: { fontSize: 15, fontWeight: '700', color: '#111827', marginBottom: 4 },
+  noteCardPreview: { fontSize: 13, color: '#6b7280', lineHeight: 19, marginBottom: 4 },
+  noteCardDate: { fontSize: 11, color: '#9ca3af', marginTop: 2 },
 });
