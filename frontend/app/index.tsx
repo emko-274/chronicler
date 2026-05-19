@@ -278,10 +278,7 @@ function TimelineChart({
       if (!typeMatch) return;
       const start = new Date(l.started_at);
       const startMOD = start.getHours() * 60 + start.getMinutes(); // minute-of-day
-      if (!l.ended_at || l.duration_minutes === 0) {
-        raw[Math.min(Math.floor((startMOD / 1440) * HMAP_SLOTS), HMAP_SLOTS - 1)] += 1;
-        return;
-      }
+      if (!l.ended_at || l.duration_minutes === 0) return;
       const end = new Date(l.ended_at);
       const endMOD = end.getHours() * 60 + end.getMinutes();
       const crossMidnight = dayKey(start) !== dayKey(end);
@@ -345,9 +342,11 @@ function TimelineChart({
           const typesSeen = new Set<string>();
           const chartTypes: string[] = [];
           logs.forEach(l => { if (!typesSeen.has(l.activity_type)) { typesSeen.add(l.activity_type); chartTypes.push(l.activity_type); } });
+          const visibleChartTypes = chartTypes.filter(t => visibleTypes.has(t));
+          if (hmapType && !visibleTypes.has(hmapType)) setHmapType('');
           const hmapOpts: DropdownOpt[] = [
             { label: 'All', value: '' },
-            ...chartTypes.map(t => ({ label: t, value: t })),
+            ...visibleChartTypes.map(t => ({ label: t, value: t })),
           ];
           return (
             <>
