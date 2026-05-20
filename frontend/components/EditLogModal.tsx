@@ -462,7 +462,7 @@ export default function EditLogModal({
                 placeholderTextColor="#9ca3af"
                 value={tagInput}
                 onChangeText={(t) => {
-                  if (t.endsWith(',') || t.endsWith(' ')) {
+                  if (t.endsWith(',')) {
                     const tag = t.slice(0, -1).trim();
                     if (tag && !tags.includes(tag)) setTags(prev => [...prev, tag]);
                     setTagInput('');

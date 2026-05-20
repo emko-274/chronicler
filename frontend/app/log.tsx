@@ -724,7 +724,7 @@ export default function LogScreen() {
             placeholderTextColor="#9ca3af"
             value={tagInput}
             onChangeText={(t) => {
-              if (t.endsWith(',') || t.endsWith(' ')) { addTag(t.slice(0, -1)); return; }
+              if (t.endsWith(',')) { addTag(t.slice(0, -1)); return; }
               setTagInput(t);
             }}
             onSubmitEditing={() => addTag(tagInput)}

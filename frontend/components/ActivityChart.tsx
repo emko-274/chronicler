@@ -5,7 +5,7 @@ import {
 import { Svg, Rect, Text as SvgText, Line, G, Path, Circle } from 'react-native-svg';
 import { Ionicons } from '@expo/vector-icons';
 import { ActivityLog } from '@/lib/api';
-import { dayKey, toChartValue, chartUnit, SCREEN_W } from '@/lib/chartUtils';
+import { dayKey, SCREEN_W } from '@/lib/chartUtils';
 
 export function ActivityChart({
   type,
@@ -31,6 +31,9 @@ export function ActivityChart({
   svgHeight?: number;
 }) {
   const [tooltip, setTooltip] = useState<{ idx: number } | null>(null);
+  const hideDelayRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hideTipDelayed = () => { hideDelayRef.current = setTimeout(() => setTooltip(null), 200); };
+  const cancelHide = () => { if (hideDelayRef.current) { clearTimeout(hideDelayRef.current); hideDelayRef.current = null; } };
   const scrollRef = useRef<ScrollView>(null);
   const [scrollX, setScrollX] = useState(colWidth * numDays);
   const [viewportW, setViewportW] = useState(SCREEN_W - 68);
@@ -150,8 +153,13 @@ export function ActivityChart({
     return best;
   })();
 
-  const unit = useCountMode ? 'entries' : hasDuration ? chartUnit(type) : hasQuantity ? (derivedQuantityUnit || 'qty') : 'times';
-  const dv = (rawVal: number) => (hasDuration && !useCountMode) ? toChartValue(type, rawVal) : rawVal;
+  const useHours = hasDuration && !useCountMode && byDate.size > 0
+    && ([...byDate.values()].reduce((s, v) => s + v, 0) / byDate.size > 60);
+  const unit = useCountMode ? 'entries' : hasDuration ? (useHours ? 'hrs' : 'min') : hasQuantity ? (derivedQuantityUnit || 'qty') : 'times';
+  const dv = (rawVal: number) => {
+    if (hasDuration && !useCountMode) return useHours ? parseFloat((rawVal / 60).toFixed(1)) : Math.round(rawVal);
+    return rawVal;
+  };
 
   const maxScrollX = Math.max(0, colWidth * numDays - viewportW);
   const clampedX = Math.min(scrollX, maxScrollX);
@@ -227,10 +235,15 @@ export function ActivityChart({
   const tipDay = tooltip !== null ? days[tooltip.idx] : null;
   const tipVal = tipDay?.value != null ? dv(tipDay.value) : null;
   const TIP_W = 68;
+  const TIP_H = 22;
+  const dotY = tooltip !== null && tipVal !== null ? yOf(tipVal) : 0;
+  const tipAbove = dotY - TIP_H - 4 >= 0;
   const tipX = tooltip !== null
     ? Math.max(2, Math.min(xOf(tooltip.idx) - TIP_W / 2, totalChartW - TIP_W - 2))
     : 0;
-  const tipY = tooltip !== null ? Math.max(PT + 2, yOf(tipVal!) - 30) : 0;
+  const tipY = tooltip !== null
+    ? (tipAbove ? dotY - TIP_H - 4 : Math.min(dotY + dotR + 4, SVG_H - TIP_H))
+    : 0;
 
   return (
     <View style={styles.chartPanelItem}>
@@ -316,7 +329,7 @@ export function ActivityChart({
               const v = dv(d.value);
               const selected = tooltip?.idx === i;
               const dotProps = Platform.OS === 'web'
-                ? { onMouseEnter: () => setTooltip({ idx: i }), onMouseLeave: () => setTooltip(null) }
+                ? { onMouseEnter: () => { cancelHide(); setTooltip({ idx: i }); }, onMouseLeave: hideTipDelayed }
                 : { onPressIn: () => setTooltip({ idx: i }), onPressOut: () => setTooltip(null) };
               return (
                 <Circle key={i} cx={xOf(i)} cy={yOf(v)} r={selected ? dotR + 1 : dotR}
@@ -334,7 +347,7 @@ export function ActivityChart({
               const cy = yOf(v);
               const selected = tooltip?.idx === i;
               const dotProps = Platform.OS === 'web'
-                ? { onMouseEnter: () => setTooltip({ idx: i }), onMouseLeave: () => setTooltip(null) }
+                ? { onMouseEnter: () => { cancelHide(); setTooltip({ idx: i }); }, onMouseLeave: hideTipDelayed }
                 : { onPressIn: () => setTooltip({ idx: i }), onPressOut: () => setTooltip(null) };
               return (
                 <G key={i}>
@@ -377,7 +390,7 @@ export function ActivityChart({
             })}
             {tooltip !== null && tipVal !== null && (
               <G>
-                <Rect x={tipX} y={tipY} width={TIP_W} height={22} rx={5} fill="#1f2937" />
+                <Rect x={tipX} y={tipY} width={TIP_W} height={TIP_H} rx={5} fill="#1f2937" />
                 <SvgText x={tipX + TIP_W / 2} y={tipY + 14} fontSize={11} fontWeight="700" fill="#fff" textAnchor="middle">
                   {`${tipVal % 1 === 0 ? tipVal.toFixed(0) : tipVal.toFixed(1)} ${unit}`}
                 </SvgText>
