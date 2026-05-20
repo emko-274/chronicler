@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import {
   View, Text, ScrollView, ActivityIndicator,
-  StyleSheet, TouchableOpacity, Platform, Alert,
+  StyleSheet, TouchableOpacity, Platform, Alert, Modal,
 } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
 import {
@@ -398,98 +398,112 @@ export default function PublicView() {
         </View>
       </View>
 
-      {/* Export panel */}
-      {showExport && (
-        <View style={styles.exportPanel}>
-          <Text style={styles.exportPanelTitle}>Export Data</Text>
-
-          <View style={styles.exportSectionRow}>
-            <Text style={styles.exportLabel}>Activity Types</Text>
-            <TouchableOpacity onPress={() => {
-              const allSel = typeOrder.every(t => exportTypes.has(t));
-              setExportTypes(allSel ? new Set() : new Set(typeOrder));
-            }}>
-              <Text style={styles.exportToggleAll}>
-                {typeOrder.every(t => exportTypes.has(t)) ? 'Deselect all' : 'Select all'}
-              </Text>
-            </TouchableOpacity>
-          </View>
-          <View style={styles.exportChips}>
-            {typeOrder.map(type => {
-              const on = exportTypes.has(type);
-              const color = colorMap.get(type)?.[0] ?? '#6366f1';
-              return (
-                <TouchableOpacity
-                  key={type}
-                  style={[styles.exportChip, on ? { backgroundColor: color, borderColor: color } : styles.exportChipOff]}
-                  onPress={() => {
-                    const next = new Set(exportTypes);
-                    on ? next.delete(type) : next.add(type);
-                    setExportTypes(next);
-                  }}
-                >
-                  <Text style={[styles.exportChipText, !on && styles.exportChipTextOff]}>{type}</Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-
-          <Text style={[styles.exportLabel, { marginTop: 14 }]}>Date Range</Text>
-          {Platform.OS === 'web' ? (
-            <View style={styles.exportDateRow}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.exportDateLabel}>From</Text>
-                {/* @ts-ignore */}
-                <input type="date" value={exportStartDate}
-                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setExportStartDate(e.target.value)}
-                  style={exportDateInputStyle} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.exportDateLabel}>To</Text>
-                {/* @ts-ignore */}
-                <input type="date" value={exportEndDate}
-                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setExportEndDate(e.target.value)}
-                  style={exportDateInputStyle} />
-              </View>
-            </View>
-          ) : (
-            <Text style={styles.exportHint}>Date filtering available on web.</Text>
-          )}
-
-          <Text style={[styles.exportLabel, { marginTop: 14 }]}>Columns</Text>
-          {EXPORT_COLUMNS.map(col => {
-            const on = exportColumns.has(col.key);
-            return (
-              <TouchableOpacity key={col.key} style={styles.exportCheckRow}
-                onPress={() => {
-                  const next = new Set(exportColumns);
-                  on ? next.delete(col.key) : next.add(col.key);
-                  setExportColumns(next);
-                }}
-              >
-                <View style={[styles.exportCheckbox, on && styles.exportCheckboxOn]}>
-                  {on && <Text style={styles.exportCheckmark}>✓</Text>}
-                </View>
-                <Text style={styles.exportCheckLabel}>{col.label}</Text>
+      {/* Export modal */}
+      <Modal
+        visible={showExport}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowExport(false)}
+      >
+        <TouchableOpacity style={styles.modalBackdrop} activeOpacity={1} onPress={() => setShowExport(false)}>
+          <TouchableOpacity style={styles.modalCard} activeOpacity={1} onPress={() => {}}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.exportPanelTitle}>Export Data</Text>
+              <TouchableOpacity onPress={() => setShowExport(false)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                <Ionicons name="close" size={20} color="#6b7280" />
               </TouchableOpacity>
-            );
-          })}
+            </View>
 
-          <View style={styles.exportFooter}>
-            <Text style={styles.exportCount}>
-              {exportFiltered.length} {exportFiltered.length === 1 ? 'entry' : 'entries'}
-            </Text>
-            <TouchableOpacity
-              style={[styles.exportBtn, (exportFiltered.length === 0 || exportColumns.size === 0) && styles.exportBtnOff]}
-              onPress={handleExport}
-              disabled={exportFiltered.length === 0 || exportColumns.size === 0}
-            >
-              <Ionicons name="download-outline" size={14} color="#fff" style={{ marginRight: 5 }} />
-              <Text style={styles.exportBtnText}>Export CSV</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      )}
+            <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+              <View style={styles.exportSectionRow}>
+                <Text style={styles.exportLabel}>Activity Types</Text>
+                <TouchableOpacity onPress={() => {
+                  const allSel = typeOrder.every(t => exportTypes.has(t));
+                  setExportTypes(allSel ? new Set() : new Set(typeOrder));
+                }}>
+                  <Text style={styles.exportToggleAll}>
+                    {typeOrder.every(t => exportTypes.has(t)) ? 'Deselect all' : 'Select all'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+              <View style={styles.exportChips}>
+                {typeOrder.map(type => {
+                  const on = exportTypes.has(type);
+                  const color = colorMap.get(type)?.[0] ?? '#6366f1';
+                  return (
+                    <TouchableOpacity
+                      key={type}
+                      style={[styles.exportChip, on ? { backgroundColor: color, borderColor: color } : styles.exportChipOff]}
+                      onPress={() => {
+                        const next = new Set(exportTypes);
+                        on ? next.delete(type) : next.add(type);
+                        setExportTypes(next);
+                      }}
+                    >
+                      <Text style={[styles.exportChipText, !on && styles.exportChipTextOff]}>{type}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+              <Text style={[styles.exportLabel, { marginTop: 14 }]}>Date Range</Text>
+              {Platform.OS === 'web' ? (
+                <View style={styles.exportDateRow}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.exportDateLabel}>From</Text>
+                    {/* @ts-ignore */}
+                    <input type="date" value={exportStartDate}
+                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => setExportStartDate(e.target.value)}
+                      style={exportDateInputStyle} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.exportDateLabel}>To</Text>
+                    {/* @ts-ignore */}
+                    <input type="date" value={exportEndDate}
+                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => setExportEndDate(e.target.value)}
+                      style={exportDateInputStyle} />
+                  </View>
+                </View>
+              ) : (
+                <Text style={styles.exportHint}>Date filtering available on web.</Text>
+              )}
+
+              <Text style={[styles.exportLabel, { marginTop: 14 }]}>Columns</Text>
+              {EXPORT_COLUMNS.map(col => {
+                const on = exportColumns.has(col.key);
+                return (
+                  <TouchableOpacity key={col.key} style={styles.exportCheckRow}
+                    onPress={() => {
+                      const next = new Set(exportColumns);
+                      on ? next.delete(col.key) : next.add(col.key);
+                      setExportColumns(next);
+                    }}
+                  >
+                    <View style={[styles.exportCheckbox, on && styles.exportCheckboxOn]}>
+                      {on && <Text style={styles.exportCheckmark}>✓</Text>}
+                    </View>
+                    <Text style={styles.exportCheckLabel}>{col.label}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+
+              <View style={styles.exportFooter}>
+                <Text style={styles.exportCount}>
+                  {exportFiltered.length} {exportFiltered.length === 1 ? 'entry' : 'entries'}
+                </Text>
+                <TouchableOpacity
+                  style={[styles.exportBtn, (exportFiltered.length === 0 || exportColumns.size === 0) && styles.exportBtnOff]}
+                  onPress={handleExport}
+                  disabled={exportFiltered.length === 0 || exportColumns.size === 0}
+                >
+                  <Ionicons name="download-outline" size={14} color="#fff" style={{ marginRight: 5 }} />
+                  <Text style={styles.exportBtnText}>Export CSV</Text>
+                </TouchableOpacity>
+              </View>
+            </ScrollView>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
 
       {/* Color picker panel */}
       {showColors && (
@@ -931,11 +945,22 @@ const styles = StyleSheet.create({
   },
   exportIconBtnOn: { backgroundColor: '#6366f1' },
 
-  exportPanel: {
-    backgroundColor: '#fff', borderRadius: 12, borderWidth: 1, borderColor: '#e5e7eb',
-    padding: 16, marginBottom: 14,
+  modalBackdrop: {
+    flex: 1, backgroundColor: 'rgba(0,0,0,0.45)',
+    justifyContent: 'center', alignItems: 'center', padding: 20,
   },
-  exportPanelTitle: { fontSize: 15, fontWeight: '700', color: '#111827', marginBottom: 12 },
+  modalCard: {
+    backgroundColor: '#fff', borderRadius: 16,
+    padding: 20, width: '100%', maxWidth: 480,
+    maxHeight: 600,
+    shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 20,
+    shadowOffset: { width: 0, height: 8 }, elevation: 10,
+  },
+  modalHeader: {
+    flexDirection: 'row', justifyContent: 'space-between',
+    alignItems: 'center', marginBottom: 16,
+  },
+  exportPanelTitle: { fontSize: 15, fontWeight: '700', color: '#111827' },
   exportSectionRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
   exportLabel: { fontSize: 11, fontWeight: '700', color: '#6b7280', textTransform: 'uppercase', letterSpacing: 0.5 },
   exportToggleAll: { fontSize: 12, color: '#6366f1', fontWeight: '600' },

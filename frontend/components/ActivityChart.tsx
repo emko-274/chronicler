@@ -256,7 +256,7 @@ export function ActivityChart({
               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
               activeOpacity={0.75}
             >
-              <Ionicons name="apps-outline" size={13} color={useCountMode ? '#fff' : '#6b7280'} />
+              <Text style={[styles.countModeBtnIcon, useCountMode && styles.countModeBtnIconOn]}>123</Text>
               {countBtnHovered && (
                 <Text style={[styles.countModeBtnText, useCountMode && styles.countModeBtnTextOn]}>
                   {useCountMode ? 'counts on' : 'show counts'}
@@ -394,6 +394,8 @@ const styles = StyleSheet.create({
   countModeBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 6, paddingVertical: 4, borderRadius: 10 },
   countModeBtnExpanded: { paddingHorizontal: 8, backgroundColor: '#e5e7eb' },
   countModeBtnOn: { backgroundColor: '#6366f1' },
+  countModeBtnIcon: { fontSize: 11, fontWeight: '700', color: '#6b7280', letterSpacing: -0.5 },
+  countModeBtnIconOn: { color: '#fff' },
   countModeBtnText: { fontSize: 10, fontWeight: '600', color: '#6b7280' },
   countModeBtnTextOn: { color: '#fff' },
   chartEmpty: { fontSize: 13, color: '#9ca3af', paddingBottom: 4 },
