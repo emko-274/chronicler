@@ -15,46 +15,16 @@ import {
   dayKey, formatDuration, formatTimeRange, lightenHex,
 } from '@/lib/chartUtils';
 import { Ionicons } from '@expo/vector-icons';
-
-// ── CSV export utilities ──────────────────────────────────────────────────────
-
-const EXPORT_COLUMNS: { key: keyof ActivityLog; label: string }[] = [
-  { key: 'activity_type',    label: 'Activity Type' },
-  { key: 'started_at',       label: 'Start Time' },
-  { key: 'ended_at',         label: 'End Time' },
-  { key: 'duration_minutes', label: 'Duration (min)' },
-  { key: 'notes',            label: 'Notes' },
-];
+import {
+  EXPORT_COLUMNS, DEFAULT_COLUMNS,
+  buildCSV, downloadCSV, downloadXLSX,
+} from '@/lib/exportUtils';
 
 const exportDateInputStyle: React.CSSProperties = {
   fontSize: 14, padding: '8px 10px', borderRadius: 8,
   border: '1px solid #d1d5db', backgroundColor: '#fff',
   color: '#111827', width: '100%', boxSizing: 'border-box',
 };
-
-function escapeCSV(value: unknown): string {
-  if (value === null || value === undefined) return '';
-  const str = String(value);
-  if (str.includes(',') || str.includes('"') || str.includes('\n')) {
-    return `"${str.replace(/"/g, '""')}"`;
-  }
-  return str;
-}
-
-function buildCSV(logs: ActivityLog[], columns: { key: keyof ActivityLog; label: string }[]): string {
-  const header = columns.map(c => c.label).join(',');
-  const rows = logs.map(log => columns.map(({ key }) => escapeCSV(log[key])).join(','));
-  return [header, ...rows].join('\n');
-}
-
-function downloadCSV(content: string, filename: string) {
-  const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url; a.download = filename;
-  document.body.appendChild(a); a.click();
-  document.body.removeChild(a); URL.revokeObjectURL(url);
-}
 
 type Tab = 'stream' | 'charts' | 'notes';
 type NoteSubTab = 'daily' | 'general';
@@ -214,7 +184,8 @@ export default function PublicView() {
   const [exportTypes, setExportTypes] = useState<Set<string>>(new Set());
   const [exportStartDate, setExportStartDate] = useState('');
   const [exportEndDate, setExportEndDate] = useState('');
-  const [exportColumns, setExportColumns] = useState<Set<string>>(new Set(EXPORT_COLUMNS.map(c => c.key)));
+  const [exportColumns, setExportColumns] = useState<Set<string>>(new Set(DEFAULT_COLUMNS));
+  const [exportFormat, setExportFormat] = useState<'csv' | 'xlsx'>('csv');
   const [showSettings, setShowSettings] = useState(false);
   const [showColors, setShowColors] = useState(false);
   const [colorOverrides, setColorOverrides] = useState<Map<string, string>>(new Map());
@@ -339,15 +310,18 @@ export default function PublicView() {
     return true;
   }), [logs, exportTypes, exportStartDate, exportEndDate]);
 
-  function handleExport() {
+  async function handleExport() {
     if (exportFiltered.length === 0 || exportColumns.size === 0) return;
+    if (Platform.OS !== 'web') {
+      Alert.alert('Web only', 'Open in a browser to download files.');
+      return;
+    }
     const cols = EXPORT_COLUMNS.filter(c => exportColumns.has(c.key));
-    const csv = buildCSV(exportFiltered, cols);
-    const filename = `activity_export_${new Date().toISOString().slice(0, 10)}.csv`;
-    if (Platform.OS === 'web') {
-      downloadCSV(csv, filename);
+    const base = `activity_export_${new Date().toISOString().slice(0, 10)}`;
+    if (exportFormat === 'xlsx') {
+      await downloadXLSX(exportFiltered, cols, `${base}.xlsx`);
     } else {
-      Alert.alert('Web only', 'Open in a browser to download CSV files.');
+      downloadCSV(buildCSV(exportFiltered, cols), `${base}.csv`);
     }
   }
 
@@ -483,6 +457,9 @@ export default function PublicView() {
                       {on && <Text style={styles.exportCheckmark}>✓</Text>}
                     </View>
                     <Text style={styles.exportCheckLabel}>{col.label}</Text>
+                    {!col.defaultOn && (
+                      <Text style={styles.exportCheckHint}>advanced</Text>
+                    )}
                   </TouchableOpacity>
                 );
               })}
@@ -491,14 +468,29 @@ export default function PublicView() {
                 <Text style={styles.exportCount}>
                   {exportFiltered.length} {exportFiltered.length === 1 ? 'entry' : 'entries'}
                 </Text>
-                <TouchableOpacity
-                  style={[styles.exportBtn, (exportFiltered.length === 0 || exportColumns.size === 0) && styles.exportBtnOff]}
-                  onPress={handleExport}
-                  disabled={exportFiltered.length === 0 || exportColumns.size === 0}
-                >
-                  <Ionicons name="download-outline" size={14} color="#fff" style={{ marginRight: 5 }} />
-                  <Text style={styles.exportBtnText}>Export CSV</Text>
-                </TouchableOpacity>
+                <View style={styles.exportFooterActions}>
+                  <View style={styles.exportFormatToggle}>
+                    {(['csv', 'xlsx'] as const).map(fmt => (
+                      <TouchableOpacity
+                        key={fmt}
+                        style={[styles.exportFormatBtn, exportFormat === fmt && styles.exportFormatBtnOn]}
+                        onPress={() => setExportFormat(fmt)}
+                      >
+                        <Text style={[styles.exportFormatBtnText, exportFormat === fmt && styles.exportFormatBtnTextOn]}>
+                          {fmt.toUpperCase()}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                  <TouchableOpacity
+                    style={[styles.exportBtn, (exportFiltered.length === 0 || exportColumns.size === 0) && styles.exportBtnOff]}
+                    onPress={handleExport}
+                    disabled={exportFiltered.length === 0 || exportColumns.size === 0}
+                  >
+                    <Ionicons name="download-outline" size={14} color="#fff" style={{ marginRight: 5 }} />
+                    <Text style={styles.exportBtnText}>Export</Text>
+                  </TouchableOpacity>
+                </View>
               </View>
             </ScrollView>
           </TouchableOpacity>
@@ -976,10 +968,20 @@ const styles = StyleSheet.create({
   exportCheckbox: { width: 18, height: 18, borderRadius: 4, borderWidth: 2, borderColor: '#d1d5db', alignItems: 'center', justifyContent: 'center' },
   exportCheckboxOn: { backgroundColor: '#6366f1', borderColor: '#6366f1' },
   exportCheckmark: { color: '#fff', fontSize: 10, fontWeight: '700' },
-  exportCheckLabel: { fontSize: 14, color: '#111827' },
-  exportFooter: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 14 },
+  exportCheckLabel: { fontSize: 14, color: '#111827', flex: 1 },
+  exportCheckHint: { fontSize: 11, color: '#d1d5db', fontWeight: '500' },
+  exportFooter: { flexDirection: 'column', gap: 10, marginTop: 14 },
+  exportFooterActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   exportCount: { fontSize: 13, color: '#6b7280' },
-  exportBtn: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#6366f1', paddingHorizontal: 16, paddingVertical: 9, borderRadius: 8 },
+  exportFormatToggle: {
+    flexDirection: 'row', borderRadius: 8, borderWidth: 1,
+    borderColor: '#e5e7eb', overflow: 'hidden', backgroundColor: '#f3f4f6',
+  },
+  exportFormatBtn: { paddingHorizontal: 12, paddingVertical: 8 },
+  exportFormatBtnOn: { backgroundColor: '#6366f1' },
+  exportFormatBtnText: { fontSize: 12, fontWeight: '700', color: '#6b7280' },
+  exportFormatBtnTextOn: { color: '#fff' },
+  exportBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#6366f1', paddingHorizontal: 16, paddingVertical: 9, borderRadius: 8 },
   exportBtnOff: { backgroundColor: '#c7d2fe' },
   exportBtnText: { color: '#fff', fontSize: 13, fontWeight: '700' },
 
