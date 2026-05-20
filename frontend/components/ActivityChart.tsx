@@ -237,8 +237,12 @@ export function ActivityChart({
       <View style={styles.chartHeader}>
         <TouchableOpacity style={{ flex: 1 }} onPress={onToggleCollapsed} activeOpacity={0.7}>
           <Text style={styles.chartTitle}>{type}</Text>
-          {!collapsed && meanStr !== '' && <Text style={styles.chartMean}>avg {meanStr}</Text>}
-          {!collapsed && avgEntryStr !== '' && <Text style={styles.chartMean}>avg {avgEntryStr}</Text>}
+          {!collapsed && (meanStr !== '' || avgEntryStr !== '') && (
+            <View style={{ flexDirection: 'row', gap: 10 }}>
+              {meanStr !== '' && <Text style={styles.chartMean}>avg {meanStr}</Text>}
+              {avgEntryStr !== '' && <Text style={styles.chartMean}>avg {avgEntryStr}</Text>}
+            </View>
+          )}
         </TouchableOpacity>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
           {canToggleCount && (

@@ -83,6 +83,9 @@ function TimelineChart({
   useEffect(() => { if (!expanded) setModalPage(0); }, [expanded]);
   const [isPinching, setIsPinching] = useState(false);
   const [tooltip, setTooltip] = useState<TooltipState | null>(null);
+  const hideDelayRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hideTipDelayed = () => { hideDelayRef.current = setTimeout(() => setTooltip(null), 350); };
+  const cancelHide = () => { if (hideDelayRef.current) { clearTimeout(hideDelayRef.current); hideDelayRef.current = null; } };
   const [crosshairY, setCrosshairY] = useState<number | null>(null);
   const [crosshairX, setCrosshairX] = useState<number | null>(null);
   const [isFlipped, setIsFlipped] = useState(false);
@@ -475,7 +478,7 @@ function TimelineChart({
                         setTooltip({ logs: overlapping.length > 0 ? overlapping : [log], barX, barY: rowIdx * FLIPPED_ROW_H, barH: FLIPPED_ROW_H });
                       };
                       const interactionProps = Platform.OS === 'web'
-                        ? { onMouseEnter: showTip, onMouseLeave: () => setTooltip(null), onClick: () => onEdit(log) }
+                        ? { onMouseEnter: () => { cancelHide(); showTip(); }, onMouseLeave: hideTipDelayed, onClick: () => onEdit(log) }
                         : { onPressIn: showTip, onPressOut: () => setTooltip(null), onPress: () => onEdit(log) };
                       if (log.ended_at) {
                         const end = new Date(log.ended_at);
@@ -545,7 +548,9 @@ function TimelineChart({
               <View
                 style={{ position: 'absolute', left: overlayLeft, top: overlayTop, width: TOOLTIP_W, backgroundColor: '#fff', borderRadius: 8, borderWidth: 1, borderColor: '#d1d5db', paddingHorizontal: 10, paddingVertical: 7, zIndex: 20, shadowColor: '#000', shadowOpacity: 0.08, shadowRadius: 6, shadowOffset: { width: 0, height: 2 } }}
                 // @ts-ignore
-                onMouseLeave={() => setTooltip(null)}
+                onMouseEnter={cancelHide}
+                // @ts-ignore
+                onMouseLeave={hideTipDelayed}
               >
                 {tooltip.logs.map((tlog, ei) => {
                   const isTimeless = tlog.extra_data?.zero === true || tlog.extra_data?.untimed === true;
@@ -717,7 +722,7 @@ function TimelineChart({
                       const toggleTip = () => isHovered ? hideTip() : showTip();
                       // Mouse events (web only) — passing these to native SVG elements causes freezes
                       const interactionProps = Platform.OS === 'web'
-                        ? { onMouseEnter: showTip, onMouseLeave: () => setTooltip(null), onClick: () => onEdit(log) }
+                        ? { onMouseEnter: () => { cancelHide(); showTip(); }, onMouseLeave: hideTipDelayed, onClick: () => onEdit(log) }
                         : { onPressIn: showTip, onPressOut: hideTip, onPress: () => onEdit(log) };
 
                       if (log.ended_at) {
@@ -874,7 +879,9 @@ function TimelineChart({
                 shadowOffset: { width: 0, height: 2 },
               }}
               // @ts-ignore — web mouse events
-              onMouseLeave={() => setTooltip(null)}
+              onMouseEnter={cancelHide}
+              // @ts-ignore
+              onMouseLeave={hideTipDelayed}
             >
               {tooltip.logs.map((tlog, ei) => {
                 const isTimeless = tlog.extra_data?.zero === true || tlog.extra_data?.untimed === true;
