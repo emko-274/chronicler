@@ -160,7 +160,34 @@ export function ActivityChart({
   const windowDataPoints = days.slice(visStartIdx, visEndIdx + 1).filter(d => d.value !== null);
   const chartVals = windowDataPoints.map(d => dv(d.value!));
   const mean = chartVals.length > 0 ? chartVals.reduce((s, v) => s + v, 0) / chartVals.length : null;
-  const meanStr = mean !== null ? `${mean % 1 === 0 ? mean.toFixed(0) : mean.toFixed(1)} ${unit}` : '';
+  const meanStr = mean !== null ? `${mean % 1 === 0 ? mean.toFixed(0) : mean.toFixed(1)} ${unit} / day` : '';
+
+  const avgEntryVal = (() => {
+    if (useCountMode) return null;
+    if (hasDuration) {
+      const validLogs = logs.filter(l =>
+        l.activity_type === type &&
+        l.duration_minutes != null &&
+        l.extra_data?.zero !== true &&
+        l.extra_data?.untimed !== true
+      );
+      if (validLogs.length === 0) return null;
+      return dv(validLogs.reduce((s, l) => s + l.duration_minutes!, 0) / validLogs.length);
+    }
+    if (hasQuantity) {
+      const validLogs = logs.filter(l =>
+        l.activity_type === type &&
+        typeof l.extra_data?.quantity === 'number' &&
+        l.extra_data.quantity !== 0
+      );
+      if (validLogs.length === 0) return null;
+      return validLogs.reduce((s, l) => s + (l.extra_data!.quantity as number), 0) / validLogs.length;
+    }
+    return null;
+  })();
+  const avgEntryStr = avgEntryVal !== null
+    ? `${avgEntryVal % 1 === 0 ? avgEntryVal.toFixed(0) : avgEntryVal.toFixed(1)} ${unit} / entry`
+    : '';
 
   const YW = 36;
   const SVG_H = svgHeight ?? 160;
@@ -211,6 +238,7 @@ export function ActivityChart({
         <TouchableOpacity style={{ flex: 1 }} onPress={onToggleCollapsed} activeOpacity={0.7}>
           <Text style={styles.chartTitle}>{type}</Text>
           {!collapsed && meanStr !== '' && <Text style={styles.chartMean}>avg {meanStr}</Text>}
+          {!collapsed && avgEntryStr !== '' && <Text style={styles.chartMean}>avg {avgEntryStr}</Text>}
         </TouchableOpacity>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
           {canToggleCount && (
@@ -222,14 +250,14 @@ export function ActivityChart({
               } : {})}
               style={[
                 styles.countModeBtn,
-                (countBtnHovered || useCountMode) && styles.countModeBtnExpanded,
+                countBtnHovered && styles.countModeBtnExpanded,
                 useCountMode && styles.countModeBtnOn,
               ]}
               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
               activeOpacity={0.75}
             >
-              <Ionicons name="list-outline" size={13} color={useCountMode ? '#fff' : '#6b7280'} />
-              {(countBtnHovered || useCountMode) && (
+              <Ionicons name="apps-outline" size={13} color={useCountMode ? '#fff' : '#6b7280'} />
+              {countBtnHovered && (
                 <Text style={[styles.countModeBtnText, useCountMode && styles.countModeBtnTextOn]}>
                   {useCountMode ? 'counts on' : 'show counts'}
                 </Text>
