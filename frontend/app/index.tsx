@@ -470,9 +470,13 @@ function TimelineChart({
                         : (start.getHours() * 60 + start.getMinutes()) / (24 * 60);
                       const barX = startFrac * flippedW;
                       const color = colorMap.get(log.activity_type)?.[0] ?? '#6366f1';
+                      const showTip = () => {
+                        const overlapping = entries.filter(other => timeOverlap(log, other, day));
+                        setTooltip({ logs: overlapping.length > 0 ? overlapping : [log], barX, barY: rowIdx * FLIPPED_ROW_H, barH: FLIPPED_ROW_H });
+                      };
                       const interactionProps = Platform.OS === 'web'
-                        ? { onClick: () => onEdit(log) }
-                        : { onPress: () => onEdit(log) };
+                        ? { onMouseEnter: showTip, onMouseLeave: () => setTooltip(null), onClick: () => onEdit(log) }
+                        : { onPressIn: showTip, onPressOut: () => setTooltip(null), onPress: () => onEdit(log) };
                       if (log.ended_at) {
                         const end = new Date(log.ended_at);
                         const endsToday = dayKey(end) === day;
@@ -531,6 +535,64 @@ function TimelineChart({
               </View>
             </View>
           )}
+          {tooltip && Platform.OS === 'web' && (() => {
+            const clampedScrollY = Math.min(scrollYSnap, Math.max(0, numDays * FLIPPED_ROW_H - chartH));
+            const rowScreenY = DATE_LABEL_H + tooltip.barY - clampedScrollY;
+            const spaceAbove = rowScreenY > 120 + TOOLTIP_PAD;
+            const overlayTop = Math.max(DATE_LABEL_H, spaceAbove ? rowScreenY - 120 - TOOLTIP_PAD : rowScreenY + FLIPPED_ROW_H + TOOLTIP_PAD);
+            const overlayLeft = Math.max(TIME_LABEL_W, Math.min(TIME_LABEL_W + tooltip.barX, TIME_LABEL_W + flippedW - TOOLTIP_W));
+            return (
+              <View
+                style={{ position: 'absolute', left: overlayLeft, top: overlayTop, width: TOOLTIP_W, backgroundColor: '#fff', borderRadius: 8, borderWidth: 1, borderColor: '#d1d5db', paddingHorizontal: 10, paddingVertical: 7, zIndex: 20, shadowColor: '#000', shadowOpacity: 0.08, shadowRadius: 6, shadowOffset: { width: 0, height: 2 } }}
+                // @ts-ignore
+                onMouseLeave={() => setTooltip(null)}
+              >
+                {tooltip.logs.map((tlog, ei) => {
+                  const isTimeless = tlog.extra_data?.zero === true || tlog.extra_data?.untimed === true;
+                  const timeStr = isTimeless
+                    ? new Date(tlog.started_at).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
+                    : formatTimeRange(tlog.started_at, tlog.ended_at);
+                  const dur = tlog.duration_minutes ? formatDuration(tlog.duration_minutes) : null;
+                  const rawQty = tlog.extra_data?.quantity;
+                  const qty = typeof rawQty === 'number'
+                    ? `${rawQty % 1 === 0 ? rawQty.toFixed(0) : rawQty.toFixed(1)}${tlog.extra_data?.unit ? ` ${tlog.extra_data.unit}` : ''}`
+                    : null;
+                  const noteSnippet = tlog.notes ? (tlog.notes.length > 40 ? tlog.notes.slice(0, 40) + '…' : tlog.notes) : null;
+                  const tlogTags = Array.isArray(tlog.extra_data?.tags) ? (tlog.extra_data!.tags as string[]) : [];
+                  const lines = [timeStr, dur, qty, noteSnippet].filter(Boolean) as string[];
+                  const color = colorMap.get(tlog.activity_type)?.[0] ?? '#6366f1';
+                  return (
+                    <View key={tlog.id}>
+                      {ei > 0 && <View style={{ height: 1, backgroundColor: '#e5e7eb', marginVertical: 6 }} />}
+                      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 2 }}>
+                        <Text style={{ fontSize: 11, fontWeight: '700', color }}>
+                          {tlog.activity_type.charAt(0).toUpperCase() + tlog.activity_type.slice(1)}
+                        </Text>
+                        <View style={{ flexDirection: 'row', gap: 4 }}>
+                          <TouchableOpacity onPress={() => { setTooltip(null); onEdit(tlog); }} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
+                            <Ionicons name="pencil-outline" size={12} color="#9ca3af" />
+                          </TouchableOpacity>
+                          <TouchableOpacity onPress={async () => { const ok = window.confirm(`Delete this ${tlog.activity_type} entry?`); if (!ok) return; setTooltip(null); await deleteLog(tlog.id); onDelete(); }} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
+                            <Ionicons name="trash-outline" size={12} color="#9ca3af" />
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                      {lines.map((line, i) => <Text key={i} style={{ fontSize: 10, color: '#6b7280', lineHeight: 13 }}>{line}</Text>)}
+                      {tlogTags.length > 0 && (
+                        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 3, marginTop: 4 }}>
+                          {tlogTags.map(tag => (
+                            <View key={tag} style={{ backgroundColor: '#eef2ff', borderRadius: 8, paddingHorizontal: 5, paddingVertical: 1 }}>
+                              <Text style={{ fontSize: 9, color: '#4f46e5', fontWeight: '600' }}>{tag}</Text>
+                            </View>
+                          ))}
+                        </View>
+                      )}
+                    </View>
+                  );
+                })}
+              </View>
+            );
+          })()}
         </View>
       ) : (
         // ── Normal: dates = columns (X), time-of-day = rows (Y) ──────────────
@@ -980,10 +1042,7 @@ function TypeToggles({
           style={[styles.reorderBtn, reordering && styles.reorderBtnOn]}
           hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
         >
-          <Ionicons name={reordering ? 'checkmark' : 'layers-outline'} size={13} color={reordering ? '#fff' : '#6366f1'} />
-          <Text style={[styles.reorderBtnText, reordering && styles.reorderBtnTextOn]}>
-            {reordering ? 'Done' : 'Reorder'}
-          </Text>
+          <Ionicons name={reordering ? 'checkmark' : 'layers-outline'} size={14} color={reordering ? '#fff' : '#6366f1'} />
         </TouchableOpacity>
       </View>
       <ScrollView horizontal showsHorizontalScrollIndicator={false}>
@@ -1576,13 +1635,10 @@ const styles = StyleSheet.create({
   toggleChipText: { color: '#fff', fontWeight: '600', fontSize: 13 },
   toggleChipTextOff: { color: '#6b7280' },
   reorderBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 4,
-    paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8,
-    borderWidth: 1, borderColor: '#6366f1',
+    width: 30, height: 30, borderRadius: 15, borderWidth: 1, borderColor: '#6366f1',
+    alignItems: 'center', justifyContent: 'center', flexShrink: 0,
   },
   reorderBtnOn: { backgroundColor: '#6366f1' },
-  reorderBtnText: { fontSize: 11, fontWeight: '600', color: '#6366f1' },
-  reorderBtnTextOn: { color: '#fff' },
 
   // Charts
   chartCard: {

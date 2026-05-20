@@ -428,7 +428,7 @@ export function PublicTimeline({
                       const color = colorMap.get(log.activity_type)?.[0] ?? '#6366f1';
                       const showTip = () => {
                         const overlapping = entries.filter(other => timeOverlap(log, other, day));
-                        setTooltip({ logs: overlapping.length > 0 ? overlapping : [log], barX, barY: 0, barH: FLIPPED_ROW_H });
+                        setTooltip({ logs: overlapping.length > 0 ? overlapping : [log], barX, barY: rowIdx * FLIPPED_ROW_H, barH: FLIPPED_ROW_H });
                       };
                       const tipProps = Platform.OS === 'web'
                         ? { onMouseEnter: showTip, onMouseLeave: () => setTooltip(null) }
@@ -468,6 +468,42 @@ export function PublicTimeline({
               </View>
             </View>
           )}
+          {tooltip && Platform.OS === 'web' && (() => {
+            const clampedScrollY = Math.min(scrollYSnap, Math.max(0, numDays * FLIPPED_ROW_H - chartH));
+            const rowScreenY = DATE_LABEL_H + tooltip.barY - clampedScrollY;
+            const spaceAbove = rowScreenY > 120 + TOOLTIP_PAD;
+            const overlayTop = Math.max(DATE_LABEL_H, spaceAbove ? rowScreenY - 120 - TOOLTIP_PAD : rowScreenY + FLIPPED_ROW_H + TOOLTIP_PAD);
+            const overlayLeft = Math.max(TIME_LABEL_W, Math.min(TIME_LABEL_W + tooltip.barX, TIME_LABEL_W + flippedW - TOOLTIP_W));
+            return (
+              <View
+                style={[s.tipOverlay, { left: overlayLeft, top: overlayTop }]}
+                // @ts-ignore
+                onMouseLeave={() => setTooltip(null)}
+              >
+                {tooltip.logs.map((tlog, ei) => {
+                  const isTimeless = tlog.extra_data?.zero === true || tlog.extra_data?.untimed === true;
+                  const timeStr = isTimeless
+                    ? new Date(tlog.started_at).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
+                    : formatTimeRange(tlog.started_at, tlog.ended_at);
+                  const dur = tlog.duration_minutes ? formatDuration(tlog.duration_minutes) : null;
+                  const rawQty = tlog.extra_data?.quantity;
+                  const qty = typeof rawQty === 'number'
+                    ? `${rawQty % 1 === 0 ? rawQty.toFixed(0) : rawQty.toFixed(1)}${tlog.extra_data?.unit ? ` ${tlog.extra_data.unit}` : ''}`
+                    : null;
+                  const noteSnippet = tlog.notes ? (tlog.notes.length > 40 ? tlog.notes.slice(0, 40) + '…' : tlog.notes) : null;
+                  const lines = [timeStr, dur, qty, noteSnippet].filter(Boolean) as string[];
+                  const color = colorMap.get(tlog.activity_type)?.[0] ?? '#6366f1';
+                  return (
+                    <View key={tlog.id}>
+                      {ei > 0 && <View style={s.tipDivider} />}
+                      <Text style={[s.tipType, { color }]}>{tlog.activity_type}</Text>
+                      {lines.map((line, i) => <Text key={i} style={s.tipLine}>{line}</Text>)}
+                    </View>
+                  );
+                })}
+              </View>
+            );
+          })()}
         </View>
       ) : (
         <View style={{ position: 'relative' }}>

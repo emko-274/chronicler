@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import {
   View, Text, ScrollView, ActivityIndicator,
-  StyleSheet, TouchableOpacity, Platform,
+  StyleSheet, TouchableOpacity, Platform, Alert,
 } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
 import {
@@ -15,6 +15,46 @@ import {
   dayKey, formatDuration, formatTimeRange, lightenHex,
 } from '@/lib/chartUtils';
 import { Ionicons } from '@expo/vector-icons';
+
+// ── CSV export utilities ──────────────────────────────────────────────────────
+
+const EXPORT_COLUMNS: { key: keyof ActivityLog; label: string }[] = [
+  { key: 'activity_type',    label: 'Activity Type' },
+  { key: 'started_at',       label: 'Start Time' },
+  { key: 'ended_at',         label: 'End Time' },
+  { key: 'duration_minutes', label: 'Duration (min)' },
+  { key: 'notes',            label: 'Notes' },
+];
+
+const exportDateInputStyle: React.CSSProperties = {
+  fontSize: 14, padding: '8px 10px', borderRadius: 8,
+  border: '1px solid #d1d5db', backgroundColor: '#fff',
+  color: '#111827', width: '100%', boxSizing: 'border-box',
+};
+
+function escapeCSV(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  const str = String(value);
+  if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+  return str;
+}
+
+function buildCSV(logs: ActivityLog[], columns: { key: keyof ActivityLog; label: string }[]): string {
+  const header = columns.map(c => c.label).join(',');
+  const rows = logs.map(log => columns.map(({ key }) => escapeCSV(log[key])).join(','));
+  return [header, ...rows].join('\n');
+}
+
+function downloadCSV(content: string, filename: string) {
+  const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a); URL.revokeObjectURL(url);
+}
 
 type Tab = 'stream' | 'charts' | 'notes';
 type NoteSubTab = 'daily' | 'general';
@@ -170,6 +210,14 @@ export default function PublicView() {
   const [noteSubTab, setNoteSubTab] = useState<NoteSubTab>('daily');
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [reordering, setReordering] = useState(false);
+  const [showExport, setShowExport] = useState(false);
+  const [exportTypes, setExportTypes] = useState<Set<string>>(new Set());
+  const [exportStartDate, setExportStartDate] = useState('');
+  const [exportEndDate, setExportEndDate] = useState('');
+  const [exportColumns, setExportColumns] = useState<Set<string>>(new Set(EXPORT_COLUMNS.map(c => c.key)));
+  const [showSettings, setShowSettings] = useState(false);
+  const [showColors, setShowColors] = useState(false);
+  const [colorOverrides, setColorOverrides] = useState<Map<string, string>>(new Map());
 
   const [colWidth, setColWidth] = useState(DEFAULT_COL_W);
   const [numDays, setNumDays] = useState(DEFAULT_HISTORY);
@@ -210,6 +258,7 @@ export default function PublicView() {
         data.forEach(l => { if (!seen.has(l.activity_type)) { seen.add(l.activity_type); order.push(l.activity_type); } });
         setTypeOrder(order);
         setVisibleTypes(new Set(order));
+        setExportTypes(new Set(order));
         if (info.include_notes) return getPublicNotes(token);
         return [];
       })
@@ -221,11 +270,12 @@ export default function PublicView() {
   const colorMap = useMemo(() => {
     const m = new Map<string, string[]>();
     typeOrder.forEach((t, i) => {
-      const pair = TYPE_COLORS[i % TYPE_COLORS.length];
-      m.set(t, [pair[0], lightenHex(pair[0])]);
+      const override = colorOverrides.get(t);
+      const primary = override ?? TYPE_COLORS[i % TYPE_COLORS.length][0];
+      m.set(t, [primary, lightenHex(primary)]);
     });
     return m;
-  }, [typeOrder]);
+  }, [typeOrder, colorOverrides]);
 
   // Notes indexed by date for stream inline notes
   const notesByDate = useMemo(() => {
@@ -282,6 +332,25 @@ export default function PublicView() {
     return [...byDay.entries()].sort(([a], [b]) => b.localeCompare(a)).slice(0, 90);
   }, [logs, visibleTypes]);
 
+  const exportFiltered = useMemo(() => logs.filter(log => {
+    if (!exportTypes.has(log.activity_type)) return false;
+    if (exportStartDate && new Date(log.started_at) < new Date(exportStartDate)) return false;
+    if (exportEndDate && new Date(log.started_at) > new Date(exportEndDate + 'T23:59:59')) return false;
+    return true;
+  }), [logs, exportTypes, exportStartDate, exportEndDate]);
+
+  function handleExport() {
+    if (exportFiltered.length === 0 || exportColumns.size === 0) return;
+    const cols = EXPORT_COLUMNS.filter(c => exportColumns.has(c.key));
+    const csv = buildCSV(exportFiltered, cols);
+    const filename = `activity_export_${new Date().toISOString().slice(0, 10)}.csv`;
+    if (Platform.OS === 'web') {
+      downloadCSV(csv, filename);
+    } else {
+      Alert.alert('Web only', 'Open in a browser to download CSV files.');
+    }
+  }
+
   function moveType(idx: number, dir: -1 | 1) {
     const next = idx + dir;
     if (next < 0 || next >= typeOrder.length) return;
@@ -315,10 +384,147 @@ export default function PublicView() {
       {/* Header */}
       <View style={styles.headerRow}>
         <Text style={styles.heading}>{ownerName ? `${ownerName}'s Dashboard` : 'Dashboard'}</Text>
-        <View style={styles.badge}>
-          <Text style={styles.badgeText}>Read-only</Text>
+        <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+          <View style={styles.badge}>
+            <Text style={styles.badgeText}>Read-only</Text>
+          </View>
+          <TouchableOpacity
+            style={[styles.exportIconBtn, showExport && styles.exportIconBtnOn]}
+            onPress={() => setShowExport(e => !e)}
+            hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+          >
+            <Ionicons name="download-outline" size={15} color={showExport ? '#fff' : '#6366f1'} />
+          </TouchableOpacity>
         </View>
       </View>
+
+      {/* Export panel */}
+      {showExport && (
+        <View style={styles.exportPanel}>
+          <Text style={styles.exportPanelTitle}>Export Data</Text>
+
+          <View style={styles.exportSectionRow}>
+            <Text style={styles.exportLabel}>Activity Types</Text>
+            <TouchableOpacity onPress={() => {
+              const allSel = typeOrder.every(t => exportTypes.has(t));
+              setExportTypes(allSel ? new Set() : new Set(typeOrder));
+            }}>
+              <Text style={styles.exportToggleAll}>
+                {typeOrder.every(t => exportTypes.has(t)) ? 'Deselect all' : 'Select all'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+          <View style={styles.exportChips}>
+            {typeOrder.map(type => {
+              const on = exportTypes.has(type);
+              const color = colorMap.get(type)?.[0] ?? '#6366f1';
+              return (
+                <TouchableOpacity
+                  key={type}
+                  style={[styles.exportChip, on ? { backgroundColor: color, borderColor: color } : styles.exportChipOff]}
+                  onPress={() => {
+                    const next = new Set(exportTypes);
+                    on ? next.delete(type) : next.add(type);
+                    setExportTypes(next);
+                  }}
+                >
+                  <Text style={[styles.exportChipText, !on && styles.exportChipTextOff]}>{type}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+
+          <Text style={[styles.exportLabel, { marginTop: 14 }]}>Date Range</Text>
+          {Platform.OS === 'web' ? (
+            <View style={styles.exportDateRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.exportDateLabel}>From</Text>
+                {/* @ts-ignore */}
+                <input type="date" value={exportStartDate}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setExportStartDate(e.target.value)}
+                  style={exportDateInputStyle} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.exportDateLabel}>To</Text>
+                {/* @ts-ignore */}
+                <input type="date" value={exportEndDate}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setExportEndDate(e.target.value)}
+                  style={exportDateInputStyle} />
+              </View>
+            </View>
+          ) : (
+            <Text style={styles.exportHint}>Date filtering available on web.</Text>
+          )}
+
+          <Text style={[styles.exportLabel, { marginTop: 14 }]}>Columns</Text>
+          {EXPORT_COLUMNS.map(col => {
+            const on = exportColumns.has(col.key);
+            return (
+              <TouchableOpacity key={col.key} style={styles.exportCheckRow}
+                onPress={() => {
+                  const next = new Set(exportColumns);
+                  on ? next.delete(col.key) : next.add(col.key);
+                  setExportColumns(next);
+                }}
+              >
+                <View style={[styles.exportCheckbox, on && styles.exportCheckboxOn]}>
+                  {on && <Text style={styles.exportCheckmark}>✓</Text>}
+                </View>
+                <Text style={styles.exportCheckLabel}>{col.label}</Text>
+              </TouchableOpacity>
+            );
+          })}
+
+          <View style={styles.exportFooter}>
+            <Text style={styles.exportCount}>
+              {exportFiltered.length} {exportFiltered.length === 1 ? 'entry' : 'entries'}
+            </Text>
+            <TouchableOpacity
+              style={[styles.exportBtn, (exportFiltered.length === 0 || exportColumns.size === 0) && styles.exportBtnOff]}
+              onPress={handleExport}
+              disabled={exportFiltered.length === 0 || exportColumns.size === 0}
+            >
+              <Ionicons name="download-outline" size={14} color="#fff" style={{ marginRight: 5 }} />
+              <Text style={styles.exportBtnText}>Export CSV</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
+      {/* Color picker panel */}
+      {showColors && (
+        <View style={styles.colorPanel}>
+          <Text style={styles.colorPanelTitle}>Label Colors</Text>
+          {typeOrder.map(type => {
+            const currentColor = colorMap.get(type)?.[0] ?? '#6366f1';
+            const hasOverride = colorOverrides.has(type);
+            return (
+              <View key={type} style={styles.colorRow}>
+                <View style={[styles.colorRowDot, { backgroundColor: currentColor }]} />
+                <Text style={styles.colorRowType} numberOfLines={1}>{type}</Text>
+                <View style={styles.colorSwatches}>
+                  {TYPE_COLORS.map(([color]) => (
+                    <TouchableOpacity
+                      key={color}
+                      style={[styles.colorSwatch, { backgroundColor: color }, currentColor === color && styles.colorSwatchSelected]}
+                      onPress={() => setColorOverrides(prev => new Map(prev).set(type, color))}
+                    />
+                  ))}
+                  {hasOverride && (
+                    <TouchableOpacity
+                      style={styles.colorResetBtn}
+                      onPress={() => setColorOverrides(prev => { const next = new Map(prev); next.delete(type); return next; })}
+                      hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                    >
+                      <Ionicons name="refresh-outline" size={13} color="#9ca3af" />
+                    </TouchableOpacity>
+                  )}
+                </View>
+              </View>
+            );
+          })}
+        </View>
+      )}
 
       {/* Type filter chips + reorder */}
       <View style={styles.chipSection}>
@@ -354,13 +560,38 @@ export default function PublicView() {
             );
           })}
         </ScrollView>
-        <TouchableOpacity
-          style={[styles.reorderBtn, reordering && styles.reorderBtnOn]}
-          onPress={() => setReordering(r => !r)}
-          hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-        >
-          <Ionicons name={reordering ? 'checkmark' : 'layers-outline'} size={14} color={reordering ? '#fff' : '#6366f1'} />
-        </TouchableOpacity>
+        <View style={{ position: 'relative', zIndex: 10 }}>
+          <TouchableOpacity
+            style={[styles.reorderBtn, (showSettings || reordering || showColors) && styles.reorderBtnOn]}
+            onPress={() => setShowSettings(s => !s)}
+            hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+          >
+            <Ionicons
+              name="settings-outline"
+              size={14}
+              color={(showSettings || reordering || showColors) ? '#fff' : '#6366f1'}
+            />
+          </TouchableOpacity>
+          {showSettings && (
+            <View style={styles.settingsDropdown}>
+              <TouchableOpacity
+                style={[styles.settingsItem, reordering && styles.settingsItemOn]}
+                onPress={() => { setReordering(r => !r); setShowSettings(false); }}
+              >
+                <Ionicons name="layers-outline" size={14} color={reordering ? '#6366f1' : '#374151'} />
+                <Text style={[styles.settingsItemText, reordering && styles.settingsItemTextOn]}>Reorder</Text>
+              </TouchableOpacity>
+              <View style={styles.settingsDivider} />
+              <TouchableOpacity
+                style={[styles.settingsItem, showColors && styles.settingsItemOn]}
+                onPress={() => { setShowColors(c => !c); setShowSettings(false); }}
+              >
+                <Ionicons name="color-palette-outline" size={14} color={showColors ? '#6366f1' : '#374151'} />
+                <Text style={[styles.settingsItemText, showColors && styles.settingsItemTextOn]}>Choose colors</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+        </View>
       </View>
 
       {/* Tab bar */}
@@ -663,6 +894,69 @@ const styles = StyleSheet.create({
   logsSection: { marginBottom: 12 },
   logsToggle: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 4, marginBottom: 4 },
   logsToggleText: { fontSize: 12, fontWeight: '600', color: '#9ca3af' },
+
+  settingsDropdown: {
+    position: 'absolute', right: 0, top: 34,
+    backgroundColor: '#fff', borderRadius: 10,
+    borderWidth: 1, borderColor: '#e5e7eb',
+    shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 }, elevation: 5,
+    zIndex: 100, minWidth: 155, overflow: 'hidden',
+  },
+  settingsItem: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 14, paddingVertical: 11 },
+  settingsItemOn: { backgroundColor: '#eef2ff' },
+  settingsItemText: { fontSize: 13, fontWeight: '600', color: '#374151' },
+  settingsItemTextOn: { color: '#6366f1' },
+  settingsDivider: { height: 1, backgroundColor: '#f3f4f6' },
+
+  colorPanel: {
+    backgroundColor: '#fff', borderRadius: 12, borderWidth: 1, borderColor: '#e5e7eb',
+    padding: 16, marginBottom: 14,
+  },
+  colorPanelTitle: { fontSize: 15, fontWeight: '700', color: '#111827', marginBottom: 10 },
+  colorRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    paddingVertical: 9, borderBottomWidth: 1, borderBottomColor: '#f3f4f6',
+  },
+  colorRowDot: { width: 10, height: 10, borderRadius: 5, flexShrink: 0 },
+  colorRowType: { fontSize: 13, fontWeight: '600', color: '#374151', width: 90, flexShrink: 1 },
+  colorSwatches: { flexDirection: 'row', gap: 6, flex: 1, flexWrap: 'wrap', justifyContent: 'flex-end', alignItems: 'center' },
+  colorSwatch: { width: 22, height: 22, borderRadius: 11 },
+  colorSwatchSelected: { borderWidth: 3, borderColor: '#fff', shadowColor: '#000', shadowOpacity: 0.25, shadowRadius: 3, elevation: 3 },
+  colorResetBtn: { padding: 2 },
+
+  exportIconBtn: {
+    width: 30, height: 30, borderRadius: 15, borderWidth: 1, borderColor: '#6366f1',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  exportIconBtnOn: { backgroundColor: '#6366f1' },
+
+  exportPanel: {
+    backgroundColor: '#fff', borderRadius: 12, borderWidth: 1, borderColor: '#e5e7eb',
+    padding: 16, marginBottom: 14,
+  },
+  exportPanelTitle: { fontSize: 15, fontWeight: '700', color: '#111827', marginBottom: 12 },
+  exportSectionRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
+  exportLabel: { fontSize: 11, fontWeight: '700', color: '#6b7280', textTransform: 'uppercase', letterSpacing: 0.5 },
+  exportToggleAll: { fontSize: 12, color: '#6366f1', fontWeight: '600' },
+  exportChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 4 },
+  exportChip: { paddingHorizontal: 12, paddingVertical: 5, borderRadius: 20, borderWidth: 1 },
+  exportChipOff: { backgroundColor: '#f3f4f6', borderColor: '#e5e7eb' },
+  exportChipText: { fontSize: 12, fontWeight: '600', color: '#fff' },
+  exportChipTextOff: { color: '#6b7280' },
+  exportDateRow: { flexDirection: 'row', gap: 10, marginTop: 6 },
+  exportDateLabel: { fontSize: 11, color: '#9ca3af', marginBottom: 4 },
+  exportHint: { fontSize: 12, color: '#9ca3af', marginTop: 4 },
+  exportCheckRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8, gap: 10, borderBottomWidth: 1, borderBottomColor: '#f3f4f6' },
+  exportCheckbox: { width: 18, height: 18, borderRadius: 4, borderWidth: 2, borderColor: '#d1d5db', alignItems: 'center', justifyContent: 'center' },
+  exportCheckboxOn: { backgroundColor: '#6366f1', borderColor: '#6366f1' },
+  exportCheckmark: { color: '#fff', fontSize: 10, fontWeight: '700' },
+  exportCheckLabel: { fontSize: 14, color: '#111827' },
+  exportFooter: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 14 },
+  exportCount: { fontSize: 13, color: '#6b7280' },
+  exportBtn: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#6366f1', paddingHorizontal: 16, paddingVertical: 9, borderRadius: 8 },
+  exportBtnOff: { backgroundColor: '#c7d2fe' },
+  exportBtnText: { color: '#fff', fontSize: 13, fontWeight: '700' },
 
   logCard: { backgroundColor: '#f9fafb', borderRadius: 8, padding: 10, marginBottom: 6, borderWidth: 1, borderColor: '#e5e7eb' },
   logCardRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
