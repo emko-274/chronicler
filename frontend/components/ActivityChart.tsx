@@ -251,10 +251,9 @@ export function ActivityChart({
         <TouchableOpacity style={{ flex: 1 }} onPress={onToggleCollapsed} activeOpacity={0.7}>
           <Text style={styles.chartTitle}>{type}</Text>
           {!collapsed && (meanStr !== '' || avgEntryStr !== '') && (
-            <View style={{ flexDirection: 'row', gap: 10 }}>
-              {meanStr !== '' && <Text style={styles.chartMean}>avg {meanStr}</Text>}
-              {avgEntryStr !== '' && <Text style={styles.chartMean}>avg {avgEntryStr}</Text>}
-            </View>
+            <Text style={styles.chartMean}>
+              {[meanStr !== '' ? `avg ${meanStr}` : null, avgEntryStr || null].filter(Boolean).join(', ')}
+            </Text>
           )}
         </TouchableOpacity>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
@@ -408,7 +407,7 @@ const styles = StyleSheet.create({
   chartHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
   chartTitle: { fontSize: 13, fontWeight: '600', color: '#374151' },
   chartMean: { fontSize: 11, color: '#9ca3af', marginTop: 1 },
-  countModeBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 6, paddingVertical: 4, borderRadius: 10 },
+  countModeBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 6, paddingVertical: 4, borderRadius: 10, backgroundColor: '#f3f4f6' },
   countModeBtnExpanded: { paddingHorizontal: 8, backgroundColor: '#e5e7eb' },
   countModeBtnOn: { backgroundColor: '#6366f1' },
   countModeBtnIcon: { fontSize: 11, fontWeight: '700', color: '#6b7280', letterSpacing: -0.5 },

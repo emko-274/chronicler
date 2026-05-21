@@ -402,6 +402,18 @@ export default function LogScreen() {
     setShowDropdown(false);
   };
 
+  const handleTypeSubmit = () => {
+    if (!typeQuery.trim()) return;
+    if (exactMatch) {
+      const match = knownTypes.find(t => t.toLowerCase() === normalizedQuery)!;
+      selectType(match);
+    } else if (filtered.length > 0) {
+      selectType(filtered[0]);
+    } else {
+      addNewType();
+    }
+  };
+
   const addNewType = () => {
     const name = typeQuery.trim();
     if (!name) return;
@@ -546,6 +558,9 @@ export default function LogScreen() {
           onChangeText={(t) => { setTypeQuery(t); setShowDropdown(true); }}
           onFocus={() => setShowDropdown(true)}
           onBlur={() => { setTimeout(() => setShowDropdown(false), 150); }}
+          onSubmitEditing={handleTypeSubmit}
+          returnKeyType="done"
+          blurOnSubmit={false}
           autoCorrect={false}
           autoCapitalize="none"
         />

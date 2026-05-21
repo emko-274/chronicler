@@ -180,15 +180,13 @@ export default function PublicView() {
   const [activeTab, setActiveTab] = useState<Tab>('stream');
   const [noteSubTab, setNoteSubTab] = useState<NoteSubTab>('daily');
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
-  const [reordering, setReordering] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [showExport, setShowExport] = useState(false);
   const [exportTypes, setExportTypes] = useState<Set<string>>(new Set());
   const [exportStartDate, setExportStartDate] = useState('');
   const [exportEndDate, setExportEndDate] = useState('');
   const [exportColumns, setExportColumns] = useState<Set<string>>(new Set(DEFAULT_COLUMNS));
   const [exportFormat, setExportFormat] = useState<'csv' | 'xlsx'>('csv');
-  const [showSettings, setShowSettings] = useState(false);
-  const [showColors, setShowColors] = useState(false);
   const [colorOverrides, setColorOverrides] = useState<Map<string, string>>(new Map());
 
   const [colWidth, setColWidth] = useState(DEFAULT_COL_W);
@@ -501,7 +499,7 @@ export default function PublicView() {
       </Modal>
 
       {/* Color picker panel */}
-      {showColors && (
+      {settingsOpen && (
         <View style={styles.colorPanel}>
           <Text style={styles.colorPanelTitle}>Label Colors</Text>
           {typeOrder.map(type => {
@@ -515,9 +513,14 @@ export default function PublicView() {
                   {TYPE_COLORS.map(([color]) => (
                     <TouchableOpacity
                       key={color}
-                      style={[styles.colorSwatch, { backgroundColor: color }, currentColor === color && styles.colorSwatchSelected]}
+                      style={[styles.colorSwatch, { backgroundColor: color }]}
                       onPress={() => setColorOverrides(prev => new Map(prev).set(type, color))}
-                    />
+                      hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
+                    >
+                      {currentColor === color && (
+                        <Ionicons name="checkmark" size={13} color="#fff" />
+                      )}
+                    </TouchableOpacity>
                   ))}
                   {hasOverride && (
                     <TouchableOpacity
@@ -541,7 +544,7 @@ export default function PublicView() {
           {typeOrder.map((type, idx) => {
             const active = visibleTypes.has(type);
             const color = colorMap.get(type)?.[0] ?? '#6366f1';
-            if (reordering) {
+            if (settingsOpen) {
               return (
                 <View key={type} style={[styles.chip, active ? { backgroundColor: color } : styles.chipOff, { flexDirection: 'row', alignItems: 'center', gap: 2 }]}>
                   <TouchableOpacity onPress={() => moveType(idx, -1)} disabled={idx === 0} hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}>
@@ -569,38 +572,13 @@ export default function PublicView() {
             );
           })}
         </ScrollView>
-        <View style={{ position: 'relative', zIndex: 200 }}>
-          <TouchableOpacity
-            style={[styles.reorderBtn, (showSettings || reordering || showColors) && styles.reorderBtnOn]}
-            onPress={() => setShowSettings(s => !s)}
-            hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-          >
-            <Ionicons
-              name="settings-outline"
-              size={14}
-              color={(showSettings || reordering || showColors) ? '#fff' : '#6366f1'}
-            />
-          </TouchableOpacity>
-          {showSettings && (
-            <View style={styles.settingsDropdown}>
-              <TouchableOpacity
-                style={[styles.settingsItem, reordering && styles.settingsItemOn]}
-                onPress={() => { setReordering(r => !r); setShowSettings(false); }}
-              >
-                <Ionicons name="layers-outline" size={14} color={reordering ? '#6366f1' : '#374151'} />
-                <Text style={[styles.settingsItemText, reordering && styles.settingsItemTextOn]}>Reorder</Text>
-              </TouchableOpacity>
-              <View style={styles.settingsDivider} />
-              <TouchableOpacity
-                style={[styles.settingsItem, showColors && styles.settingsItemOn]}
-                onPress={() => { setShowColors(c => !c); setShowSettings(false); }}
-              >
-                <Ionicons name="color-palette-outline" size={14} color={showColors ? '#6366f1' : '#374151'} />
-                <Text style={[styles.settingsItemText, showColors && styles.settingsItemTextOn]}>Choose colors</Text>
-              </TouchableOpacity>
-            </View>
-          )}
-        </View>
+        <TouchableOpacity
+          style={[styles.reorderBtn, settingsOpen && styles.reorderBtnOn]}
+          onPress={() => setSettingsOpen(s => !s)}
+          hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+        >
+          <Ionicons name="settings-outline" size={14} color={settingsOpen ? '#fff' : '#6366f1'} />
+        </TouchableOpacity>
       </View>
 
       {/* Tab bar */}
@@ -814,7 +792,7 @@ const styles = StyleSheet.create({
   badge: { backgroundColor: '#eef2ff', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 },
   badgeText: { fontSize: 11, fontWeight: '600', color: '#6366f1' },
 
-  chipSection: { flexDirection: 'row', alignItems: 'center', marginBottom: 14, gap: 8, zIndex: 100, position: 'relative' },
+  chipSection: { flexDirection: 'row', alignItems: 'center', marginBottom: 14, gap: 8 },
   chipRow: { gap: 6 },
   chip: { borderRadius: 20, paddingHorizontal: 12, paddingVertical: 6 },
   chipOff: { backgroundColor: '#f3f4f6', borderWidth: 1, borderColor: '#e5e7eb' },
@@ -904,20 +882,6 @@ const styles = StyleSheet.create({
   logsToggle: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 4, marginBottom: 4 },
   logsToggleText: { fontSize: 12, fontWeight: '600', color: '#9ca3af' },
 
-  settingsDropdown: {
-    position: 'absolute', right: 0, top: 34,
-    backgroundColor: '#fff', borderRadius: 10,
-    borderWidth: 1, borderColor: '#e5e7eb',
-    shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 8,
-    shadowOffset: { width: 0, height: 2 }, elevation: 5,
-    zIndex: 100, minWidth: 155, overflow: 'hidden',
-  },
-  settingsItem: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 14, paddingVertical: 11 },
-  settingsItemOn: { backgroundColor: '#eef2ff' },
-  settingsItemText: { fontSize: 13, fontWeight: '600', color: '#374151' },
-  settingsItemTextOn: { color: '#6366f1' },
-  settingsDivider: { height: 1, backgroundColor: '#f3f4f6' },
-
   colorPanel: {
     backgroundColor: '#fff', borderRadius: 12, borderWidth: 1, borderColor: '#e5e7eb',
     padding: 16, marginBottom: 14,
@@ -930,8 +894,7 @@ const styles = StyleSheet.create({
   colorRowDot: { width: 10, height: 10, borderRadius: 5, flexShrink: 0 },
   colorRowType: { fontSize: 13, fontWeight: '600', color: '#374151', width: 90, flexShrink: 1 },
   colorSwatches: { flexDirection: 'row', gap: 6, flex: 1, flexWrap: 'wrap', justifyContent: 'flex-end', alignItems: 'center' },
-  colorSwatch: { width: 22, height: 22, borderRadius: 11 },
-  colorSwatchSelected: { borderWidth: 3, borderColor: '#fff', shadowColor: '#000', shadowOpacity: 0.25, shadowRadius: 3, elevation: 3 },
+  colorSwatch: { width: 22, height: 22, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
   colorResetBtn: { padding: 2 },
 
   exportIconBtn: {

@@ -267,7 +267,17 @@ function DayDetail({ date, onDateChange, onBack, onNoteChanged }: {
   }, [date]);
 
   async function persist(c: string) {
-    if (!c.trim()) return;
+    if (!c.trim()) {
+      if (noteRef.current) {
+        setSaving(true);
+        try {
+          await deleteNote(noteRef.current.id);
+          noteRef.current = null;
+          onNoteChanged?.();
+        } finally { setSaving(false); }
+      }
+      return;
+    }
     setSaving(true);
     try {
       if (noteRef.current) {
