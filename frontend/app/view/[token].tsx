@@ -176,6 +176,7 @@ export default function PublicView() {
   const [error, setError] = useState('');
   const [visibleTypes, setVisibleTypes] = useState<Set<string>>(new Set());
   const [typeOrder, setTypeOrder] = useState<string[]>([]);
+  const [typeColorOrder, setTypeColorOrder] = useState<string[]>([]);
   const [activeTab, setActiveTab] = useState<Tab>('stream');
   const [noteSubTab, setNoteSubTab] = useState<NoteSubTab>('daily');
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
@@ -228,6 +229,7 @@ export default function PublicView() {
         const order: string[] = [];
         data.forEach(l => { if (!seen.has(l.activity_type)) { seen.add(l.activity_type); order.push(l.activity_type); } });
         setTypeOrder(order);
+        setTypeColorOrder(order);
         setVisibleTypes(new Set(order));
         setExportTypes(new Set(order));
         if (info.include_notes) return getPublicNotes(token);
@@ -240,13 +242,14 @@ export default function PublicView() {
 
   const colorMap = useMemo(() => {
     const m = new Map<string, string[]>();
-    typeOrder.forEach((t, i) => {
+    typeOrder.forEach((t) => {
       const override = colorOverrides.get(t);
-      const primary = override ?? TYPE_COLORS[i % TYPE_COLORS.length][0];
+      const colorIdx = typeColorOrder.indexOf(t);
+      const primary = override ?? TYPE_COLORS[(colorIdx >= 0 ? colorIdx : 0) % TYPE_COLORS.length][0];
       m.set(t, [primary, lightenHex(primary)]);
     });
     return m;
-  }, [typeOrder, colorOverrides]);
+  }, [typeOrder, typeColorOrder, colorOverrides]);
 
   // Notes indexed by date for stream inline notes
   const notesByDate = useMemo(() => {
@@ -566,7 +569,7 @@ export default function PublicView() {
             );
           })}
         </ScrollView>
-        <View style={{ position: 'relative', zIndex: 10 }}>
+        <View style={{ position: 'relative', zIndex: 200 }}>
           <TouchableOpacity
             style={[styles.reorderBtn, (showSettings || reordering || showColors) && styles.reorderBtnOn]}
             onPress={() => setShowSettings(s => !s)}
@@ -811,7 +814,7 @@ const styles = StyleSheet.create({
   badge: { backgroundColor: '#eef2ff', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 },
   badgeText: { fontSize: 11, fontWeight: '600', color: '#6366f1' },
 
-  chipSection: { flexDirection: 'row', alignItems: 'center', marginBottom: 14, gap: 8 },
+  chipSection: { flexDirection: 'row', alignItems: 'center', marginBottom: 14, gap: 8, zIndex: 100, position: 'relative' },
   chipRow: { gap: 6 },
   chip: { borderRadius: 20, paddingHorizontal: 12, paddingVertical: 6 },
   chipOff: { backgroundColor: '#f3f4f6', borderWidth: 1, borderColor: '#e5e7eb' },
