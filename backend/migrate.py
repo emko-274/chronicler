@@ -55,4 +55,9 @@ with engine.begin() as conn:
         )
     """))
 
+    conn.execute(text("""
+        ALTER TABLE public_links
+        ADD COLUMN IF NOT EXISTS colors JSONB
+    """))
+
 print("Migration complete.")

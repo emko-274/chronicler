@@ -222,6 +222,9 @@ export default function PublicView() {
       .then(([info, data]) => {
         setOwnerName(info.name);
         setIncludeNotes(info.include_notes ?? false);
+        if (info.colors && Object.keys(info.colors).length > 0) {
+          setColorOverrides(new Map(Object.entries(info.colors)));
+        }
         setLogs(data);
         const seen = new Set<string>();
         const order: string[] = [];

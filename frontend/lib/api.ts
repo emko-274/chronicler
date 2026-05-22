@@ -247,13 +247,16 @@ export const generatePublicLink = (): Promise<{ token: string }> =>
 export const updatePublicLinkSettings = (settings: { include_notes: boolean }): Promise<{ include_notes: boolean }> =>
   api.patch('/public/link', settings).then((r) => r.data);
 
+export const updatePublicLinkColors = (colors: Record<string, string>): Promise<void> =>
+  api.patch('/public/link', { colors }).then(() => {});
+
 export const revokePublicLink = (): Promise<void> =>
   api.delete('/public/link').then((r) => r.data);
 
 export const getPublicLogs = (token: string): Promise<ActivityLog[]> =>
   axios.get(`${API_BASE_URL}/public/${token}/logs`).then((r) => fixDates(r.data));
 
-export const getPublicInfo = (token: string): Promise<{ name: string; include_notes: boolean }> =>
+export const getPublicInfo = (token: string): Promise<{ name: string; include_notes: boolean; colors?: Record<string, string> }> =>
   axios.get(`${API_BASE_URL}/public/${token}/info`).then((r) => r.data);
 
 export interface NoteRecord {

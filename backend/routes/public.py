@@ -1,4 +1,5 @@
 import secrets
+from typing import Dict, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -11,7 +12,8 @@ router = APIRouter()
 
 
 class LinkSettings(BaseModel):
-    include_notes: bool
+    include_notes: Optional[bool] = None
+    colors: Optional[Dict[str, str]] = None
 
 
 @router.post("/link")
@@ -31,9 +33,12 @@ def update_link_settings(settings: LinkSettings, db: Session = Depends(get_db), 
     link = db.query(PublicLink).filter(PublicLink.owner_id == current_user.id).first()
     if not link:
         raise HTTPException(status_code=404, detail="No public link")
-    link.include_notes = settings.include_notes
+    if settings.include_notes is not None:
+        link.include_notes = settings.include_notes
+    if settings.colors is not None:
+        link.colors = settings.colors
     db.commit()
-    return {"include_notes": link.include_notes}
+    return {"include_notes": link.include_notes, "colors": link.colors or {}}
 
 
 @router.delete("/link")
@@ -55,7 +60,7 @@ def public_info(token: str, db: Session = Depends(get_db)):
     if not link:
         raise HTTPException(status_code=404, detail="Link not found")
     owner = db.query(User).filter(User.id == link.owner_id).first()
-    return {"name": owner.name, "include_notes": link.include_notes}
+    return {"name": owner.name, "include_notes": link.include_notes, "colors": link.colors or {}}
 
 
 @router.get("/{token}/notes")

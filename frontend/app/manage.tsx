@@ -13,7 +13,7 @@ import {
 } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { getCategories, hideCategory, deleteCategoryData, restoreCategory, renameCategory, markPrivate, unmarkPrivate, Category } from '@/lib/api';
+import { getCategories, hideCategory, deleteCategoryData, restoreCategory, renameCategory, markPrivate, unmarkPrivate, updatePublicLinkColors, Category } from '@/lib/api';
 
 const BUILTIN_TYPES = ['sleep'];
 
@@ -144,6 +144,7 @@ export default function ManageScreen() {
     const next = { ...customColors, [name]: color };
     setCustomColors(next);
     saveColors(next);
+    updatePublicLinkColors(next).catch(() => {});
   };
 
   const togglePrivate = async (cat: Category) => {

@@ -72,6 +72,7 @@ class PublicLink(Base):
     token = Column(String(32), unique=True, nullable=False, index=True)
     owner_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, unique=True)
     include_notes = Column(Boolean, nullable=False, default=False)
+    colors = Column(JSON, nullable=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 
