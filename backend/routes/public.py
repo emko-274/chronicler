@@ -12,20 +12,35 @@ router = APIRouter()
 
 
 class LinkSettings(BaseModel):
+    enabled: Optional[bool] = None
     include_notes: Optional[bool] = None
     colors: Optional[Dict[str, str]] = None
 
 
+def _link_response(link: PublicLink) -> dict:
+    return {
+        "token": link.token,
+        "enabled": link.enabled,
+        "include_notes": link.include_notes,
+        "colors": link.colors or {},
+    }
+
+
 @router.post("/link")
-def generate_link(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+def enable_link(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Create the link if it doesn't exist, or re-enable it if it was disabled."""
     existing = db.query(PublicLink).filter(PublicLink.owner_id == current_user.id).first()
     if existing:
-        token = existing.token
-    else:
-        token = secrets.token_urlsafe(12)
-        db.add(PublicLink(token=token, owner_id=current_user.id))
-        db.commit()
-    return {"token": token}
+        if not existing.enabled:
+            existing.enabled = True
+            db.commit()
+        return _link_response(existing)
+    token = secrets.token_urlsafe(12)
+    link = PublicLink(token=token, owner_id=current_user.id, enabled=True)
+    db.add(link)
+    db.commit()
+    db.refresh(link)
+    return _link_response(link)
 
 
 @router.patch("/link")
@@ -33,16 +48,19 @@ def update_link_settings(settings: LinkSettings, db: Session = Depends(get_db), 
     link = db.query(PublicLink).filter(PublicLink.owner_id == current_user.id).first()
     if not link:
         raise HTTPException(status_code=404, detail="No public link")
+    if settings.enabled is not None:
+        link.enabled = settings.enabled
     if settings.include_notes is not None:
         link.include_notes = settings.include_notes
     if settings.colors is not None:
         link.colors = settings.colors
     db.commit()
-    return {"include_notes": link.include_notes, "colors": link.colors or {}}
+    return _link_response(link)
 
 
 @router.delete("/link")
 def revoke_link(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Permanently delete the link. Next enable will generate a fresh token."""
     db.query(PublicLink).filter(PublicLink.owner_id == current_user.id).delete()
     db.commit()
     return {"revoked": True}
@@ -51,23 +69,28 @@ def revoke_link(db: Session = Depends(get_db), current_user: User = Depends(get_
 @router.get("/link")
 def get_link(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     link = db.query(PublicLink).filter(PublicLink.owner_id == current_user.id).first()
-    return {"token": link.token if link else None, "include_notes": link.include_notes if link else False}
+    if not link:
+        return {"token": None, "enabled": False, "include_notes": False, "colors": {}}
+    return _link_response(link)
+
+
+def _get_active_link(token: str, db: Session) -> PublicLink:
+    link = db.query(PublicLink).filter(PublicLink.token == token).first()
+    if not link or not link.enabled:
+        raise HTTPException(status_code=404, detail="Link not found")
+    return link
 
 
 @router.get("/{token}/info")
 def public_info(token: str, db: Session = Depends(get_db)):
-    link = db.query(PublicLink).filter(PublicLink.token == token).first()
-    if not link:
-        raise HTTPException(status_code=404, detail="Link not found")
+    link = _get_active_link(token, db)
     owner = db.query(User).filter(User.id == link.owner_id).first()
     return {"name": owner.name, "include_notes": link.include_notes, "colors": link.colors or {}}
 
 
 @router.get("/{token}/notes")
 def public_notes(token: str, db: Session = Depends(get_db)):
-    link = db.query(PublicLink).filter(PublicLink.token == token).first()
-    if not link:
-        raise HTTPException(status_code=404, detail="Link not found")
+    link = _get_active_link(token, db)
     if not link.include_notes:
         raise HTTPException(status_code=403, detail="Notes not shared")
     notes = db.query(Note).filter(Note.user_id == link.owner_id).order_by(Note.date.desc()).all()
@@ -79,9 +102,7 @@ def public_notes(token: str, db: Session = Depends(get_db)):
 
 @router.get("/{token}/logs")
 def public_logs(token: str, db: Session = Depends(get_db)):
-    link = db.query(PublicLink).filter(PublicLink.token == token).first()
-    if not link:
-        raise HTTPException(status_code=404, detail="Link not found")
+    link = _get_active_link(token, db)
     excluded = (
         {p.name for p in db.query(PrivateCategory).filter(PrivateCategory.user_id == link.owner_id).all()}
         | {h.name for h in db.query(HiddenCategory).filter(HiddenCategory.user_id == link.owner_id).all()}

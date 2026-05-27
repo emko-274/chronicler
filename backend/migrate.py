@@ -60,4 +60,9 @@ with engine.begin() as conn:
         ADD COLUMN IF NOT EXISTS colors JSONB
     """))
 
+    conn.execute(text("""
+        ALTER TABLE public_links
+        ADD COLUMN IF NOT EXISTS enabled BOOLEAN NOT NULL DEFAULT TRUE
+    """))
+
 print("Migration complete.")

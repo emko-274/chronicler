@@ -71,6 +71,7 @@ class PublicLink(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     token = Column(String(32), unique=True, nullable=False, index=True)
     owner_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, unique=True)
+    enabled = Column(Boolean, nullable=False, default=True)
     include_notes = Column(Boolean, nullable=False, default=False)
     colors = Column(JSON, nullable=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))

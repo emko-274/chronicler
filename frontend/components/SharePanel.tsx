@@ -4,7 +4,7 @@ import {
   ActivityIndicator, Modal, Platform, Switch,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { getMyPublicLink, generatePublicLink, revokePublicLink, updatePublicLinkSettings } from '../lib/api';
+import { getMyPublicLink, enablePublicLink, revokePublicLink, updatePublicLinkSettings } from '../lib/api';
 
 const APP_BASE_URL = process.env.EXPO_PUBLIC_APP_URL || (
   typeof window !== 'undefined' ? window.location.origin : 'https://chronicler-ten.vercel.app'
@@ -17,6 +17,7 @@ interface Props {
 
 export default function SharePanel({ visible, onClose }: Props) {
   const [token, setToken] = useState<string | null>(null);
+  const [enabled, setEnabled] = useState(false);
   const [includeNotes, setIncludeNotes] = useState(false);
   const [loading, setLoading] = useState(true);
   const [working, setWorking] = useState(false);
@@ -31,6 +32,7 @@ export default function SharePanel({ visible, onClose }: Props) {
     try {
       const data = await getMyPublicLink();
       setToken(data.token);
+      setEnabled(data.enabled);
       setIncludeNotes(data.include_notes ?? false);
     } catch {
       setError('Could not load share settings. Please try again.');
@@ -43,33 +45,43 @@ export default function SharePanel({ visible, onClose }: Props) {
     if (visible) { load(); setCopied(false); }
   }, [visible]);
 
-  const handleGenerate = async () => {
+  const handleToggle = async (value: boolean) => {
     setWorking(true);
     setError(null);
     try {
-      const data = await generatePublicLink();
-      setToken(data.token);
+      if (value) {
+        // Create link if needed, or re-enable existing one
+        const data = await enablePublicLink();
+        setToken(data.token);
+        setEnabled(true);
+      } else {
+        await updatePublicLinkSettings({ enabled: false });
+        setEnabled(false);
+      }
       setCopied(false);
     } catch {
-      setError('Failed to generate link. Please try again.');
+      setError('Failed to update sharing. Please try again.');
     } finally {
       setWorking(false);
     }
   };
 
-  const handleRevoke = async () => {
+  const handleReset = async () => {
     const confirmed = Platform.OS === 'web'
-      ? window.confirm('Revoke this link? Anyone with the current link will lose access.')
+      ? window.confirm('Reset link? The current URL will stop working and a new one will be generated.')
       : true;
     if (!confirmed) return;
     setWorking(true);
     setError(null);
     try {
       await revokePublicLink();
-      setToken(null);
+      // Immediately create a fresh link
+      const data = await enablePublicLink();
+      setToken(data.token);
+      setEnabled(true);
       setCopied(false);
     } catch {
-      setError('Failed to revoke link. Please try again.');
+      setError('Failed to reset link. Please try again.');
     } finally {
       setWorking(false);
     }
@@ -113,73 +125,72 @@ export default function SharePanel({ visible, onClose }: Props) {
                 <Text style={styles.errorText}>{error}</Text>
               </View>
             )}
+
             {loading ? (
               <ActivityIndicator color="#6366f1" style={{ marginVertical: 32 }} />
-            ) : token ? (
-              <>
-                <Text style={styles.desc}>
-                  Anyone with this link can view your dashboard. Private categories are excluded.
-                </Text>
-                <View style={styles.linkBox}>
-                  <Text style={styles.linkText} numberOfLines={1} ellipsizeMode="middle">
-                    {shareUrl}
-                  </Text>
-                </View>
-                <View style={styles.actions}>
-                  <TouchableOpacity
-                    style={[styles.btn, styles.btnPrimary, working && styles.btnDisabled]}
-                    onPress={handleCopy}
-                    disabled={working}
-                  >
-                    <Ionicons name={copied ? 'checkmark' : 'copy-outline'} size={15} color="#fff" />
-                    <Text style={styles.btnPrimaryText}>{copied ? 'Copied!' : 'Copy link'}</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.btn, styles.btnDanger, working && styles.btnDisabled]}
-                    onPress={handleRevoke}
-                    disabled={working}
-                  >
-                    {working
-                      ? <ActivityIndicator size="small" color="#dc2626" />
-                      : <Text style={styles.btnDangerText}>Revoke</Text>}
-                  </TouchableOpacity>
-                </View>
-                <View style={styles.toggleRow}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.toggleLabel}>Include journal</Text>
-                    <Text style={styles.toggleDesc}>Share your notes and journal entries with viewers</Text>
-                  </View>
-                  <Switch
-                    value={includeNotes}
-                    onValueChange={handleToggleNotes}
-                    trackColor={{ false: '#e5e7eb', true: '#818cf8' }}
-                    thumbColor={includeNotes ? '#6366f1' : '#9ca3af'}
-                  />
-                </View>
-                <TouchableOpacity
-                  style={[styles.btn, styles.btnSecondary, { marginTop: 8 }, working && styles.btnDisabled]}
-                  onPress={handleGenerate}
-                  disabled={working}
-                >
-                  <Text style={styles.btnSecondaryText}>Generate new link</Text>
-                </TouchableOpacity>
-              </>
             ) : (
               <>
-                <Text style={styles.desc}>
-                  Generate a shareable link so anyone can view your dashboard without an account.
-                  Private categories will not be included.
-                </Text>
-                <TouchableOpacity
-                  style={[styles.btn, styles.btnPrimary, working && styles.btnDisabled]}
-                  onPress={handleGenerate}
-                  disabled={working}
-                >
+                {/* Main sharing toggle */}
+                <View style={styles.toggleRow}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.toggleLabel}>Share publicly</Text>
+                    <Text style={styles.toggleDesc}>
+                      Anyone with the link can view your dashboard. Private categories are excluded.
+                    </Text>
+                  </View>
                   {working
-                    ? <ActivityIndicator size="small" color="#fff" />
-                    : <Ionicons name="link-outline" size={15} color="#fff" />}
-                  <Text style={styles.btnPrimaryText}>Generate link</Text>
-                </TouchableOpacity>
+                    ? <ActivityIndicator size="small" color="#6366f1" style={{ marginLeft: 8 }} />
+                    : (
+                      <Switch
+                        value={enabled}
+                        onValueChange={handleToggle}
+                        disabled={working}
+                        trackColor={{ false: '#e5e7eb', true: '#818cf8' }}
+                        thumbColor={enabled ? '#6366f1' : '#9ca3af'}
+                      />
+                    )}
+                </View>
+
+                {/* Link + options — only shown when enabled */}
+                {enabled && shareUrl && (
+                  <>
+                    <View style={styles.linkBox}>
+                      <Text style={styles.linkText} numberOfLines={1} ellipsizeMode="middle">
+                        {shareUrl}
+                      </Text>
+                    </View>
+
+                    <TouchableOpacity style={[styles.btn, styles.btnPrimary]} onPress={handleCopy}>
+                      <Ionicons name={copied ? 'checkmark' : 'copy-outline'} size={15} color="#fff" />
+                      <Text style={styles.btnPrimaryText}>{copied ? 'Copied!' : 'Copy link'}</Text>
+                    </TouchableOpacity>
+
+                    <View style={[styles.toggleRow, styles.sectionDivider]}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.toggleLabel}>Include journal</Text>
+                        <Text style={styles.toggleDesc}>Share your notes and journal entries with viewers</Text>
+                      </View>
+                      <Switch
+                        value={includeNotes}
+                        onValueChange={handleToggleNotes}
+                        trackColor={{ false: '#e5e7eb', true: '#818cf8' }}
+                        thumbColor={includeNotes ? '#6366f1' : '#9ca3af'}
+                      />
+                    </View>
+
+                    <View style={styles.sectionDivider}>
+                      <TouchableOpacity
+                        style={[styles.resetBtn, working && styles.btnDisabled]}
+                        onPress={handleReset}
+                        disabled={working}
+                      >
+                        <Ionicons name="refresh-outline" size={13} color="#6b7280" />
+                        <Text style={styles.resetBtnText}>Reset link</Text>
+                      </TouchableOpacity>
+                      <Text style={styles.resetHint}>Generates a new URL and invalidates the current one</Text>
+                    </View>
+                  </>
+                )}
               </>
             )}
           </View>
@@ -204,35 +215,32 @@ const styles = StyleSheet.create({
   },
   title: { flex: 1, fontSize: 15, fontWeight: '700', color: '#111827' },
   body: { padding: 20 },
-  desc: { fontSize: 14, color: '#6b7280', lineHeight: 20, marginBottom: 16 },
-  linkBox: {
-    backgroundColor: '#f3f4f6', borderRadius: 8, borderWidth: 1, borderColor: '#e5e7eb',
-    paddingHorizontal: 12, paddingVertical: 10, marginBottom: 12,
-  },
-  linkText: { fontSize: 13, color: '#374151', fontFamily: Platform.OS === 'web' ? 'monospace' : undefined },
-  actions: { flexDirection: 'row', gap: 8 },
-  toggleRow: {
-    flexDirection: 'row', alignItems: 'center', gap: 12,
-    marginTop: 16, paddingTop: 16,
-    borderTopWidth: 1, borderTopColor: '#e5e7eb',
-  },
-  toggleLabel: { fontSize: 14, fontWeight: '600', color: '#111827', marginBottom: 2 },
-  toggleDesc: { fontSize: 12, color: '#6b7280', lineHeight: 16 },
-  btn: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    gap: 6, paddingVertical: 10, paddingHorizontal: 16, borderRadius: 8,
-  },
-  btnDisabled: { opacity: 0.55 },
-  btnPrimary: { flex: 1, backgroundColor: '#6366f1' },
-  btnPrimaryText: { color: '#fff', fontWeight: '600', fontSize: 14 },
-  btnDanger: { backgroundColor: '#fef2f2', borderWidth: 1, borderColor: '#fecaca' },
-  btnDangerText: { color: '#dc2626', fontWeight: '600', fontSize: 14 },
-  btnSecondary: { backgroundColor: '#f3f4f6', borderWidth: 1, borderColor: '#e5e7eb' },
-  btnSecondaryText: { color: '#374151', fontWeight: '600', fontSize: 14 },
   errorBox: {
     flexDirection: 'row', alignItems: 'center', gap: 6,
     backgroundColor: '#fef2f2', borderRadius: 8, borderWidth: 1, borderColor: '#fecaca',
     paddingHorizontal: 12, paddingVertical: 8, marginBottom: 12,
   },
   errorText: { fontSize: 13, color: '#dc2626', flex: 1 },
+  toggleRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  sectionDivider: { marginTop: 16, paddingTop: 16, borderTopWidth: 1, borderTopColor: '#e5e7eb' },
+  toggleLabel: { fontSize: 14, fontWeight: '600', color: '#111827', marginBottom: 2 },
+  toggleDesc: { fontSize: 12, color: '#6b7280', lineHeight: 16 },
+  linkBox: {
+    backgroundColor: '#f3f4f6', borderRadius: 8, borderWidth: 1, borderColor: '#e5e7eb',
+    paddingHorizontal: 12, paddingVertical: 10, marginTop: 14, marginBottom: 10,
+  },
+  linkText: { fontSize: 13, color: '#374151', fontFamily: Platform.OS === 'web' ? 'monospace' : undefined },
+  btn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    gap: 6, paddingVertical: 10, paddingHorizontal: 16, borderRadius: 8,
+  },
+  btnDisabled: { opacity: 0.55 },
+  btnPrimary: { backgroundColor: '#6366f1' },
+  btnPrimaryText: { color: '#fff', fontWeight: '600', fontSize: 14 },
+  resetBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 5, alignSelf: 'flex-start',
+    paddingVertical: 4,
+  },
+  resetBtnText: { fontSize: 13, color: '#6b7280' },
+  resetHint: { fontSize: 12, color: '#9ca3af', marginTop: 3 },
 });

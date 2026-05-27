@@ -238,18 +238,29 @@ export const revokeShare = (share_id: string): Promise<void> =>
 
 // ── Public links ───────────────────────────────────────────────────────────
 
-export const getMyPublicLink = (): Promise<{ token: string | null; include_notes: boolean }> =>
+export interface PublicLinkState {
+  token: string | null;
+  enabled: boolean;
+  include_notes: boolean;
+  colors: Record<string, string>;
+}
+
+export const getMyPublicLink = (): Promise<PublicLinkState> =>
   api.get('/public/link').then((r) => r.data);
 
-export const generatePublicLink = (): Promise<{ token: string }> =>
+/** Create link if needed, or re-enable a disabled one. */
+export const enablePublicLink = (): Promise<PublicLinkState> =>
   api.post('/public/link').then((r) => r.data);
 
-export const updatePublicLinkSettings = (settings: { include_notes: boolean }): Promise<{ include_notes: boolean }> =>
+export const updatePublicLinkSettings = (
+  settings: { enabled?: boolean; include_notes?: boolean },
+): Promise<PublicLinkState> =>
   api.patch('/public/link', settings).then((r) => r.data);
 
 export const updatePublicLinkColors = (colors: Record<string, string>): Promise<void> =>
   api.patch('/public/link', { colors }).then(() => {});
 
+/** Permanently deletes the link. Next enablePublicLink will issue a fresh token. */
 export const revokePublicLink = (): Promise<void> =>
   api.delete('/public/link').then((r) => r.data);
 
