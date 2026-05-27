@@ -1263,11 +1263,6 @@ export default function DashboardScreen() {
   const [customTypeColors, setCustomTypeColors] = useState<Record<string, string>>({});
   const [editingLog, setEditingLog] = useState<ActivityLog | null>(null);
   const [collapsedCharts, setCollapsedCharts] = useState<Set<string>>(new Set());
-  const [viewMode, setViewMode] = useState<'timeline' | 'charts'>('timeline');
-  const [chartFrom, setChartFrom] = useState(() => {
-    const d = new Date(); d.setDate(d.getDate() - 30); return toLocalDateValue(d);
-  });
-  const [chartTo, setChartTo] = useState(() => toLocalDateValue(new Date()));
 
   const toggleChartCollapse = (type: string) => {
     setCollapsedCharts((prev) => {
@@ -1390,11 +1385,7 @@ export default function DashboardScreen() {
   if (loading) return <ActivityIndicator style={styles.centered} size="large" color="#6366f1" />;
 
   const charts = typeOrder.filter((t) => uniqueTypes.includes(t) && visibleTypes.has(t));
-  const chartNumDays = Math.max(1, Math.round(
-    (new Date(chartTo + 'T12:00:00').getTime() - new Date(chartFrom + 'T12:00:00').getTime()) / 86400000
-  ) + 1);
-
-  // Filter + sort the log list independently of the charts
+// Filter + sort the log list independently of the charts
   const [sortField, sortDir] = logSort.split('_') as ['start' | 'end', 'desc' | 'asc'];
   const filteredLogs = logs
     .filter((l) => !logFilter || l.activity_type === logFilter)
@@ -1452,92 +1443,45 @@ export default function DashboardScreen() {
               }}
             />
 
-            <View style={styles.viewModeToggle}>
-              <TouchableOpacity
-                style={[styles.viewModeBtn, viewMode === 'timeline' && styles.viewModeBtnActive]}
-                onPress={() => setViewMode('timeline')}
-              >
-                <Text style={[styles.viewModeBtnText, viewMode === 'timeline' && styles.viewModeBtnTextActive]}>Timeline</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.viewModeBtn, viewMode === 'charts' && styles.viewModeBtnActive]}
-                onPress={() => setViewMode('charts')}
-              >
-                <Text style={[styles.viewModeBtnText, viewMode === 'charts' && styles.viewModeBtnTextActive]}>Charts</Text>
-              </TouchableOpacity>
-            </View>
+            <TimelineChart
+              logs={logs}
+              colorMap={colorMap}
+              visibleTypes={visibleTypes}
+              typeOrder={typeOrder}
+              onEdit={setEditingLog}
+              onDelete={fetchLogs}
+              colWidth={colWidth}
+              setColWidth={setColWidth}
+              numDays={numDays}
+              setNumDays={setNumDays}
+              colWidthRef={colWidthRef}
+              numDaysRef={numDaysRef}
+              onScrollX={(x) => syncScrollX(x, 'timeline')}
+              registerScroll={(ref) => scrollNodeRefs.current.set('timeline', ref)}
+              charts={charts}
+            />
 
-            {viewMode === 'timeline' && (
-              <TimelineChart
-                logs={logs}
-                colorMap={colorMap}
-                visibleTypes={visibleTypes}
-                typeOrder={typeOrder}
-                onEdit={setEditingLog}
-                onDelete={fetchLogs}
-                colWidth={colWidth}
-                setColWidth={setColWidth}
-                numDays={numDays}
-                setNumDays={setNumDays}
-                colWidthRef={colWidthRef}
-                numDaysRef={numDaysRef}
-                onScrollX={(x) => syncScrollX(x, 'timeline')}
-                registerScroll={(ref) => scrollNodeRefs.current.set('timeline', ref)}
-                charts={charts}
-              />
-            )}
-
-            {viewMode === 'charts' && (
-              <>
-                <View style={styles.chartsDateRow}>
-                  {Platform.OS === 'web' ? (
-                    <>
-                      {/* @ts-ignore */}
-                      <input type="date" value={chartFrom} max={toLocalDateValue(new Date())}
-                        onChange={(e: any) => setChartFrom(e.target.value)}
-                        style={{ fontSize: 12, padding: '4px 8px', borderRadius: 8, border: '1px solid #e5e7eb', color: '#374151', backgroundColor: '#f9fafb' }} />
-                      <Text style={styles.dateRangeSep}>–</Text>
-                      {/* @ts-ignore */}
-                      <input type="date" value={chartTo} max={toLocalDateValue(new Date())}
-                        onChange={(e: any) => setChartTo(e.target.value)}
-                        style={{ fontSize: 12, padding: '4px 8px', borderRadius: 8, border: '1px solid #e5e7eb', color: '#374151', backgroundColor: '#f9fafb' }} />
-                    </>
-                  ) : (
-                    <>
-                      <TextInput style={styles.dateRangeInput} placeholder="From" placeholderTextColor="#9ca3af"
-                        value={chartFrom} onChangeText={setChartFrom} />
-                      <Text style={styles.dateRangeSep}>–</Text>
-                      <TextInput style={styles.dateRangeInput} placeholder="To" placeholderTextColor="#9ca3af"
-                        value={chartTo} onChangeText={setChartTo} />
-                    </>
-                  )}
-                </View>
-
-                {charts.length > 0 && (
-                  <View style={styles.activityChartsPanel}>
-                    {charts.flatMap((type, idx) => {
-                      const chart = (
-                        <ActivityChart
-                          key={type}
-                          type={type}
-                          logs={logs}
-                          colorPair={colorMap.get(type) ?? TYPE_COLORS[0]}
-                          colWidth={colWidth}
-                          numDays={chartNumDays}
-                          fromDate={chartFrom}
-                          toDate={chartTo}
-                          onScrollX={(x) => syncScrollX(x, type)}
-                          registerScroll={(ref) => scrollNodeRefs.current.set(type, ref)}
-                          collapsed={collapsedCharts.has(type)}
-                          onToggleCollapsed={() => toggleChartCollapse(type)}
-                        />
-                      );
-                      if (idx === 0) return [chart];
-                      return [<View key={`d-${type}`} style={styles.chartPanelDivider} />, chart];
-                    })}
-                  </View>
-                )}
-              </>
+            {charts.length > 0 && (
+              <View style={styles.activityChartsPanel}>
+                {charts.flatMap((type, idx) => {
+                  const chart = (
+                    <ActivityChart
+                      key={type}
+                      type={type}
+                      logs={logs}
+                      colorPair={colorMap.get(type) ?? TYPE_COLORS[0]}
+                      colWidth={colWidth}
+                      numDays={numDays}
+                      onScrollX={(x) => syncScrollX(x, type)}
+                      registerScroll={(ref) => scrollNodeRefs.current.set(type, ref)}
+                      collapsed={collapsedCharts.has(type)}
+                      onToggleCollapsed={() => toggleChartCollapse(type)}
+                    />
+                  );
+                  if (idx === 0) return [chart];
+                  return [<View key={`d-${type}`} style={styles.chartPanelDivider} />, chart];
+                })}
+              </View>
             )}
 
             {logs.length === 0 && (
@@ -1877,44 +1821,5 @@ const styles = StyleSheet.create({
   pageBtnDisabled: { borderColor: '#f3f4f6', backgroundColor: '#f9fafb' },
   pageLabel: { fontSize: 12, color: '#6b7280', fontWeight: '500' },
 
-  // View mode toggle
-  viewModeToggle: {
-    flexDirection: 'row',
-    backgroundColor: '#f3f4f6',
-    borderRadius: 12,
-    padding: 3,
-    marginBottom: 14,
-    alignSelf: 'flex-start',
-  },
-  viewModeBtn: {
-    paddingHorizontal: 18,
-    paddingVertical: 7,
-    borderRadius: 10,
-  },
-  viewModeBtnActive: {
-    backgroundColor: '#fff',
-    shadowColor: '#000',
-    shadowOpacity: 0.08,
-    shadowRadius: 3,
-    elevation: 1,
-  },
-  viewModeBtnText: { fontSize: 13, fontWeight: '600', color: '#6b7280' },
-  viewModeBtnTextActive: { color: '#111827' },
-
-  // Charts mode date range row
-  chartsDateRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 12,
-    backgroundColor: '#fff',
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 9,
-    shadowColor: '#000',
-    shadowOpacity: 0.04,
-    shadowRadius: 3,
-    elevation: 1,
-  },
 });
 
