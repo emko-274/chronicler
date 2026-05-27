@@ -18,6 +18,8 @@ export function ActivityChart({
   collapsed,
   onToggleCollapsed,
   svgHeight,
+  fromDate,
+  toDate,
 }: {
   type: string;
   logs: ActivityLog[];
@@ -29,6 +31,8 @@ export function ActivityChart({
   collapsed: boolean;
   onToggleCollapsed: () => void;
   svgHeight?: number;
+  fromDate?: string;
+  toDate?: string;
 }) {
   const [tooltip, setTooltip] = useState<{ idx: number } | null>(null);
   const hideDelayRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -129,11 +133,20 @@ export function ActivityChart({
 
   const today = new Date();
   const days: Array<{ key: string; value: number | null }> = [];
-  for (let i = numDays - 1; i >= 0; i--) {
-    const d = new Date(today);
-    d.setDate(today.getDate() - i);
-    const key = dayKey(d);
-    days.push({ key, value: byDate.get(key) ?? null });
+  if (fromDate && toDate) {
+    const from = new Date(fromDate + 'T12:00:00');
+    const to = new Date(toDate + 'T12:00:00');
+    for (let d = new Date(from); d <= to; d.setDate(d.getDate() + 1)) {
+      const key = dayKey(new Date(d));
+      days.push({ key, value: byDate.get(key) ?? null });
+    }
+  } else {
+    for (let i = numDays - 1; i >= 0; i--) {
+      const d = new Date(today);
+      d.setDate(today.getDate() - i);
+      const key = dayKey(d);
+      days.push({ key, value: byDate.get(key) ?? null });
+    }
   }
 
   const dataPoints = days.filter((d) => d.value !== null);
@@ -165,9 +178,14 @@ export function ActivityChart({
   const clampedX = Math.min(scrollX, maxScrollX);
   const visStartIdx = Math.max(0, Math.floor(clampedX / colWidth));
   const visEndIdx = Math.min(numDays - 1, Math.ceil((clampedX + viewportW) / colWidth));
-  const windowDataPoints = days.slice(visStartIdx, visEndIdx + 1).filter(d => d.value !== null);
+  const windowDays = days.slice(visStartIdx, visEndIdx + 1);
+  const windowDataPoints = windowDays.filter(d => d.value !== null);
+  const windowZeroCount = (!useCountMode && hasQuantity)
+    ? windowDays.filter(d => d.value === null && zeroDays.has(d.key)).length
+    : 0;
   const chartVals = windowDataPoints.map(d => dv(d.value!));
-  const mean = chartVals.length > 0 ? chartVals.reduce((s, v) => s + v, 0) / chartVals.length : null;
+  const totalDaysForMean = chartVals.length + windowZeroCount;
+  const mean = totalDaysForMean > 0 ? chartVals.reduce((s, v) => s + v, 0) / totalDaysForMean : null;
   const meanStr = mean !== null ? `${mean % 1 === 0 ? mean.toFixed(0) : mean.toFixed(1)} ${unit} / day` : '';
 
   const avgEntryVal = (() => {
@@ -185,8 +203,7 @@ export function ActivityChart({
     if (hasQuantity) {
       const validLogs = logs.filter(l =>
         l.activity_type === type &&
-        typeof l.extra_data?.quantity === 'number' &&
-        l.extra_data.quantity !== 0
+        typeof l.extra_data?.quantity === 'number'
       );
       if (validLogs.length === 0) return null;
       return validLogs.reduce((s, l) => s + (l.extra_data!.quantity as number), 0) / validLogs.length;

@@ -21,15 +21,19 @@ export default function SharePanel({ visible, onClose }: Props) {
   const [loading, setLoading] = useState(true);
   const [working, setWorking] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const shareUrl = token ? `${APP_BASE_URL}/view/${token}` : null;
 
   const load = async () => {
     setLoading(true);
+    setError(null);
     try {
       const data = await getMyPublicLink();
       setToken(data.token);
       setIncludeNotes(data.include_notes ?? false);
+    } catch {
+      setError('Could not load share settings. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -41,10 +45,13 @@ export default function SharePanel({ visible, onClose }: Props) {
 
   const handleGenerate = async () => {
     setWorking(true);
+    setError(null);
     try {
       const data = await generatePublicLink();
       setToken(data.token);
       setCopied(false);
+    } catch {
+      setError('Failed to generate link. Please try again.');
     } finally {
       setWorking(false);
     }
@@ -56,10 +63,13 @@ export default function SharePanel({ visible, onClose }: Props) {
       : true;
     if (!confirmed) return;
     setWorking(true);
+    setError(null);
     try {
       await revokePublicLink();
       setToken(null);
       setCopied(false);
+    } catch {
+      setError('Failed to revoke link. Please try again.');
     } finally {
       setWorking(false);
     }
@@ -97,6 +107,12 @@ export default function SharePanel({ visible, onClose }: Props) {
           </View>
 
           <View style={styles.body}>
+            {error && (
+              <View style={styles.errorBox}>
+                <Ionicons name="alert-circle-outline" size={14} color="#dc2626" />
+                <Text style={styles.errorText}>{error}</Text>
+              </View>
+            )}
             {loading ? (
               <ActivityIndicator color="#6366f1" style={{ marginVertical: 32 }} />
             ) : token ? (
@@ -213,4 +229,10 @@ const styles = StyleSheet.create({
   btnDangerText: { color: '#dc2626', fontWeight: '600', fontSize: 14 },
   btnSecondary: { backgroundColor: '#f3f4f6', borderWidth: 1, borderColor: '#e5e7eb' },
   btnSecondaryText: { color: '#374151', fontWeight: '600', fontSize: 14 },
+  errorBox: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    backgroundColor: '#fef2f2', borderRadius: 8, borderWidth: 1, borderColor: '#fecaca',
+    paddingHorizontal: 12, paddingVertical: 8, marginBottom: 12,
+  },
+  errorText: { fontSize: 13, color: '#dc2626', flex: 1 },
 });
