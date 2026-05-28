@@ -584,7 +584,10 @@ export function ActivityChart({
         const v = byDate.get(k);
         if (v != null) vals.push(hasDuration ? (useHours ? v / 60 : v) : v);
       });
-      const fmt = hasDuration ? fmtDurShort : (v: number) => (v % 1 === 0 ? v.toFixed(0) : v.toFixed(1));
+      // When useHours the values are already in hours — fmtDurShort expects minutes, so use a hrs formatter instead
+      const fmt = hasDuration
+        ? (useHours ? (v: number) => `${v.toFixed(1)}h` : fmtDurShort)
+        : (v: number) => (v % 1 === 0 ? v.toFixed(0) : v.toFixed(1));
       return {
         kind: 'value',
         ...buildValueHist(vals, fmt),

@@ -100,28 +100,33 @@ function TimelineChart({
   const [flippedW, setFlippedW] = useState(SCREEN_W - 94);
   const scrollYRef = useRef(0);
 
+  // Visible viewport dates — shown in pickers, updated on scroll/zoom
+  const [visibleFrom, setVisibleFrom] = useState('');
+  const [visibleTo,   setVisibleTo]   = useState('');
+
+  // Draft picker values — decoupled from the applied window during active editing.
+  // Synced from visibleFrom/visibleTo while the pickers are not focused.
+  const [draftFrom, setDraftFrom] = useState('');
+  const [draftTo,   setDraftTo]   = useState('');
+  const pickerFocused = useRef(false);
+
+  // Refs for callbacks to avoid stale closures
+  const daysRef      = useRef<string[]>([]);
+  const viewportWRef = useRef(SCREEN_W - TIME_LABEL_W - 32);
+
+  // Full data range: earliest log (with 7-day padding) → today
+  const dataFrom = useMemo(() => {
+    if (logs.length === 0) {
+      const d = new Date(); d.setFullYear(d.getFullYear() - 1); return toLocalDateValue(d);
+    }
+    const minIso = logs.reduce((m, l) => l.started_at < m ? l.started_at : m, logs[0].started_at);
+    const d = new Date(minIso); d.setDate(d.getDate() - 7); return toLocalDateValue(d);
+  }, [logs]);
+  const dataTo = toLocalDateValue(new Date()); // always today
+
   // colWidth and numDays are lifted to DashboardScreen and passed as props
 
-  // Scroll to today on initial mount
-  useEffect(() => {
-    scrollRef.current?.scrollToEnd({ animated: false });
-  }, []);
-
-  // Infinite scroll: when near left edge, prepend more days and compensate scroll position
   const scrollXRef = useRef(0);
-  const pendingCompensation = useRef(0);
-  const isExtending = useRef(false);
-
-  useEffect(() => {
-    if (pendingCompensation.current > 0) {
-      const comp = pendingCompensation.current;
-      pendingCompensation.current = 0;
-      const newX = scrollXRef.current + comp;
-      scrollRef.current?.scrollTo({ x: newX, animated: false });
-      onScrollX(newX);
-      isExtending.current = false;
-    }
-  }, [numDays]);
 
   // Reset scroll and tooltip when switching between normal / flipped view
   useEffect(() => {
@@ -150,12 +155,7 @@ function TimelineChart({
     scrollXRef.current = x;
     setScrollXSnap(x);
     onScrollX(x);
-    const threshold = colWidthRef.current * 14;
-    if (x < threshold && !isExtending.current) {
-      isExtending.current = true;
-      pendingCompensation.current = EXTEND_BY * colWidthRef.current;
-      setNumDays(prev => prev + EXTEND_BY);
-    }
+    updateVisibleDates(x, colWidthRef.current);
   };
 
   // Web: ctrl+wheel (trackpad pinch) adjusts column width — only when over this chart
@@ -167,7 +167,10 @@ function TimelineChart({
       if (!el?.contains(e.target as Node)) return;
       e.preventDefault();
       const factor = e.deltaY > 0 ? 0.9 : 1.1; // pinch = narrower cols, spread = wider
-      setColWidth(prev => Math.max(MIN_COL_W, Math.min(MAX_COL_W, Math.round(prev * factor))));
+      const newCW = Math.max(MIN_COL_W, Math.min(MAX_COL_W, Math.round(colWidthRef.current * factor)));
+      colWidthRef.current = newCW; // update ref immediately so updateVisibleDates is accurate
+      setColWidth(newCW);
+      updateVisibleDates(scrollXRef.current, newCW);
     };
     document.addEventListener('wheel', handler, { passive: false });
     return () => document.removeEventListener('wheel', handler);
@@ -219,22 +222,101 @@ function TimelineChart({
         const newW = Math.round(pinchState.current.initialColW * scale);
         setColWidth(Math.max(MIN_COL_W, Math.min(MAX_COL_W, newW)));
       },
-      onPanResponderRelease: () => { pinchState.current = null; setIsPinching(false); },
-      onPanResponderTerminate: () => { pinchState.current = null; setIsPinching(false); },
+      onPanResponderRelease: () => {
+        pinchState.current = null; setIsPinching(false);
+        updateVisibleDates(scrollXRef.current, colWidthRef.current);
+      },
+      onPanResponderTerminate: () => {
+        pinchState.current = null; setIsPinching(false);
+        updateVisibleDates(scrollXRef.current, colWidthRef.current);
+      },
     })
   ).current;
 
   const svgH = chartH + DATE_LABEL_H;
-  const totalChartW = colWidth * numDays;
 
-  // Build days oldest → newest
-  const today = new Date();
+  // Build days oldest → newest for the full data range
   const days: string[] = [];
-  for (let i = numDays - 1; i >= 0; i--) {
-    const d = new Date(today);
-    d.setDate(today.getDate() - i);
-    days.push(dayKey(d));
+  {
+    const from = new Date(dataFrom + 'T12:00:00');
+    const to   = new Date(dataTo   + 'T12:00:00');
+    for (let d = new Date(from); d <= to; d.setDate(d.getDate() + 1)) {
+      days.push(dayKey(new Date(d)));
+    }
   }
+  daysRef.current = days; // keep ref in sync each render
+
+  const totalChartW = colWidth * days.length;
+
+  // Sync numDays to parent when the data range length changes
+  const daysLen = days.length;
+  useEffect(() => { setNumDays(daysLen); }, [daysLen]);
+
+  // Update visible-window pickers from scroll position + column width
+  const updateVisibleDates = useCallback((scrollX: number, cw: number) => {
+    const dArr = daysRef.current;
+    if (!dArr.length) return;
+    const vw = viewportWRef.current;
+    const firstIdx = Math.max(0, Math.floor(scrollX / cw));
+    const lastIdx  = Math.min(dArr.length - 1, Math.floor((scrollX + vw - 1) / cw));
+    if (dArr[firstIdx]) setVisibleFrom(dArr[firstIdx]);
+    if (dArr[lastIdx])  setVisibleTo(dArr[lastIdx]);
+  }, []);
+
+  // Handle picker edits: zoom colWidth to fit the new range, scroll to show it
+  const handleVisibleRangeChange = (newFrom: string, newTo: string) => {
+    const dArr = daysRef.current;
+    if (!dArr.length || !newFrom || !newTo || newFrom > newTo) return;
+    // Clamp to data range
+    const clampedFrom = newFrom < dArr[0] ? dArr[0] : newFrom > dArr[dArr.length - 1] ? dArr[dArr.length - 1] : newFrom;
+    const clampedTo   = newTo   > dArr[dArr.length - 1] ? dArr[dArr.length - 1] : newTo < dArr[0] ? dArr[0] : newTo;
+    if (clampedFrom > clampedTo) return;
+    if (isFlippedRef.current) {
+      // Flipped: scroll vertically to show the from-date, don't change colWidth
+      const fromIdx = dArr.indexOf(clampedFrom);
+      if (fromIdx >= 0) {
+        setVisibleFrom(clampedFrom);
+        setVisibleTo(clampedTo);
+        setTimeout(() => scrollRef.current?.scrollTo({ y: fromIdx * FLIPPED_ROW_H, animated: false }), 50);
+      }
+      return;
+    }
+    // Normal: fit the selected range into the viewport by adjusting colWidth
+    const vw = viewportWRef.current;
+    const fromMs = new Date(clampedFrom + 'T12:00:00').getTime();
+    const toMs   = new Date(clampedTo   + 'T12:00:00').getTime();
+    if (isNaN(fromMs) || isNaN(toMs)) return;
+    const numVisible = Math.max(1, Math.round((toMs - fromMs) / 86400000) + 1);
+    const newCW = Math.max(MIN_COL_W, Math.min(MAX_COL_W, vw / numVisible));
+    const fromIdx = dArr.indexOf(clampedFrom);
+    const targetX = fromIdx >= 0 ? fromIdx * newCW : 0;
+    setVisibleFrom(clampedFrom);
+    setVisibleTo(clampedTo);
+    colWidthRef.current = newCW;
+    setColWidth(newCW);
+    setTimeout(() => scrollRef.current?.scrollTo({ x: targetX, animated: false }), 50);
+  };
+
+  // On mount: scroll to most recent data, then initialise visible-date pickers
+  useEffect(() => {
+    const t = setTimeout(() => {
+      scrollRef.current?.scrollToEnd({ animated: false });
+      const dArr = daysRef.current;
+      const cw   = colWidthRef.current;
+      const vw   = viewportWRef.current;
+      const maxX = Math.max(0, dArr.length * cw - vw);
+      updateVisibleDates(maxX, cw);
+    }, 80);
+    return () => clearTimeout(t);
+  }, []); // mount only
+
+  // Keep draft pickers in sync with the viewport while the user is not editing them
+  useEffect(() => {
+    if (!pickerFocused.current) {
+      setDraftFrom(visibleFrom);
+      setDraftTo(visibleTo);
+    }
+  }, [visibleFrom, visibleTo]);
 
   // Group logs by start day; multi-day entries also appear on their end day
   const byDay = new Map<string, ActivityLog[]>();
@@ -252,29 +334,41 @@ function TimelineChart({
   // scoped to only the days currently visible in the scroll viewport.
   const hmapDensity = useMemo(() => {
     if (!showHeatmap) return null;
-    const today = new Date();
+    // Rebuild full data range inside the memo (same logic as dataFrom above)
+    const hmapDays: string[] = [];
+    {
+      let dfrom: string;
+      if (logs.length === 0) {
+        const d = new Date(); d.setFullYear(d.getFullYear() - 1); dfrom = toLocalDateValue(d);
+      } else {
+        const minIso = logs.reduce((m, l) => l.started_at < m ? l.started_at : m, logs[0].started_at);
+        const d = new Date(minIso); d.setDate(d.getDate() - 7); dfrom = toLocalDateValue(d);
+      }
+      const from = new Date(dfrom + 'T12:00:00');
+      const to   = new Date(); // today
+      for (let d = new Date(from); d <= to; d.setDate(d.getDate() + 1)) {
+        hmapDays.push(dayKey(new Date(d)));
+      }
+    }
+    const totalDays = hmapDays.length;
     const daySet = new Set<string>();
     if (isFlipped) {
-      // Flipped: use only the rows visible in the vertical scroll viewport
-      const maxScrollY = Math.max(0, numDays * FLIPPED_ROW_H - chartH);
+      // Flipped: rows visible in the vertical scroll viewport
+      const maxScrollY = Math.max(0, totalDays * FLIPPED_ROW_H - chartH);
       const clampedY = Math.min(scrollYSnap, maxScrollY);
       const visStartRowIdx = Math.max(0, Math.floor(clampedY / FLIPPED_ROW_H));
-      const visEndRowIdx = Math.min(numDays, visStartRowIdx + Math.ceil(chartH / FLIPPED_ROW_H) + 1);
+      const visEndRowIdx = Math.min(totalDays, visStartRowIdx + Math.ceil(chartH / FLIPPED_ROW_H) + 1);
       for (let i = visStartRowIdx; i < visEndRowIdx; i++) {
-        const d = new Date(today);
-        d.setDate(today.getDate() - (numDays - 1 - i));
-        daySet.add(dayKey(d));
+        daySet.add(hmapDays[i]);
       }
     } else {
-      // Normal: use only the columns visible in the horizontal scroll viewport
-      const maxScrollX = Math.max(0, numDays * colWidth - viewportW);
+      // Normal: columns visible in the horizontal scroll viewport
+      const maxScrollX = Math.max(0, totalDays * colWidth - viewportW);
       const clampedX = Math.min(scrollXSnap, maxScrollX);
       const visStartIdx = Math.max(0, Math.floor(clampedX / colWidth));
-      const visEndIdx = Math.min(numDays, visStartIdx + Math.ceil(viewportW / colWidth) + 1);
+      const visEndIdx = Math.min(totalDays, visStartIdx + Math.ceil(viewportW / colWidth) + 1);
       for (let i = visStartIdx; i < visEndIdx; i++) {
-        const d = new Date(today);
-        d.setDate(today.getDate() - (numDays - 1 - i));
-        daySet.add(dayKey(d));
+        daySet.add(hmapDays[i]);
       }
     }
     const windowLogs = logs.filter((l) => {
@@ -317,37 +411,72 @@ function TimelineChart({
     }
     const maxVal = Math.max(...smoothed, 1);
     return { values: smoothed, maxVal };
-  }, [showHeatmap, isFlipped, logs, visibleTypes, numDays, colWidth, viewportW, scrollXSnap, scrollYSnap, hmapType]);
+  }, [showHeatmap, isFlipped, logs, visibleTypes, colWidth, viewportW, scrollXSnap, scrollYSnap, hmapType, chartH]);
 
   // Sparse date labels so text doesn't overlap at small column widths
   const labelEvery = colWidth < 10 ? 14 : colWidth < 20 ? 7 : 1;
 
   const chartHeaderJSX = (
     <View style={styles.chartHeader}>
-      <Text style={styles.chartTitle}>Activity Timeline</Text>
+      <Text style={[styles.chartTitle, { flexShrink: 1, marginRight: 6 }]} numberOfLines={1}>
+        Activity Timeline
+      </Text>
       <View style={styles.zoomRow}>
-        {!isFlipped && (
+        {/* Date range pickers — inline with the other controls.
+            Draft state is shown during editing; handleVisibleRangeChange fires only on
+            commit (blur on web, end-editing on native) so mid-digit changes don't
+            prematurely update the window. */}
+        {Platform.OS === 'web' ? (
           <>
-            <TouchableOpacity style={styles.zoomBtn}
-              onPress={() => setColWidth(w => Math.min(MAX_COL_W, Math.round(w * 1.4)))}>
-              <Text style={styles.zoomBtnText}>+</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.zoomBtn}
-              onPress={() => setColWidth(w => Math.max(MIN_COL_W, Math.round(w * 0.7)))}>
-              <Text style={styles.zoomBtnText}>−</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={[styles.zoomBtn, styles.zoomBtnToday]}
-              onPress={() => scrollRef.current?.scrollToEnd({ animated: false })}>
-              <Text style={[styles.zoomBtnText, styles.zoomBtnTodayText]}>Today</Text>
-            </TouchableOpacity>
+            {/* @ts-ignore */}
+            <input type="date" value={draftFrom} min={dataFrom} max={draftTo || dataTo}
+              onFocus={() => { pickerFocused.current = true; }}
+              onChange={(e: any) => setDraftFrom(e.target.value)}
+              onBlur={(e: any) => { pickerFocused.current = false; handleVisibleRangeChange(e.target.value, draftTo); }}
+              style={{ fontSize: 12, padding: '3px 6px', borderRadius: 6, border: '1px solid #e5e7eb', color: '#374151', backgroundColor: '#f9fafb' }} />
+            <Text style={styles.tlDateSep}>–</Text>
+            {/* @ts-ignore */}
+            <input type="date" value={draftTo} min={draftFrom || dataFrom} max={dataTo}
+              onFocus={() => { pickerFocused.current = true; }}
+              onChange={(e: any) => setDraftTo(e.target.value)}
+              onBlur={(e: any) => { pickerFocused.current = false; handleVisibleRangeChange(draftFrom, e.target.value); }}
+              style={{ fontSize: 12, padding: '3px 6px', borderRadius: 6, border: '1px solid #e5e7eb', color: '#374151', backgroundColor: '#f9fafb' }} />
+          </>
+        ) : (
+          <>
+            <TextInput style={styles.tlDateInput} value={draftFrom}
+              onFocus={() => { pickerFocused.current = true; }}
+              onChangeText={setDraftFrom}
+              onEndEditing={() => { pickerFocused.current = false; handleVisibleRangeChange(draftFrom, draftTo); }}
+              placeholder="From" placeholderTextColor="#9ca3af" />
+            <Text style={styles.tlDateSep}>–</Text>
+            <TextInput style={styles.tlDateInput} value={draftTo}
+              onFocus={() => { pickerFocused.current = true; }}
+              onChangeText={setDraftTo}
+              onEndEditing={() => { pickerFocused.current = false; handleVisibleRangeChange(draftFrom, draftTo); }}
+              placeholder="To" placeholderTextColor="#9ca3af" />
           </>
         )}
-        {isFlipped && (
-          <TouchableOpacity style={[styles.zoomBtn, styles.zoomBtnToday]}
-            onPress={() => scrollRef.current?.scrollToEnd({ animated: false })}>
-            <Text style={[styles.zoomBtnText, styles.zoomBtnTodayText]}>Today</Text>
-          </TouchableOpacity>
-        )}
+        <TouchableOpacity style={[styles.zoomBtn, styles.zoomBtnToday]}
+          onPress={() => {
+            const dArr = daysRef.current;
+            const cw   = colWidthRef.current;
+            const vw   = viewportWRef.current;
+            if (isFlippedRef.current) {
+              const maxY = Math.max(0, dArr.length * FLIPPED_ROW_H - chartH);
+              scrollRef.current?.scrollTo({ y: maxY, animated: true });
+              const lastIdx  = dArr.length - 1;
+              const firstIdx = Math.max(0, Math.floor(maxY / FLIPPED_ROW_H));
+              if (dArr[firstIdx]) setVisibleFrom(dArr[firstIdx]);
+              if (dArr[lastIdx])  setVisibleTo(dArr[lastIdx]);
+            } else {
+              const maxX = Math.max(0, dArr.length * cw - vw);
+              scrollRef.current?.scrollTo({ x: maxX, animated: true });
+              updateVisibleDates(maxX, cw);
+            }
+          }}>
+          <Text style={[styles.zoomBtnText, styles.zoomBtnTodayText]}>Today</Text>
+        </TouchableOpacity>
         {(() => {
           const typesSeen = new Set<string>();
           const chartTypes: string[] = [];
@@ -418,7 +547,15 @@ function TimelineChart({
 
           {/* Scrollable date rows — today at the bottom */}
           <ScrollView ref={scrollRef} style={{ maxHeight: chartH }} showsVerticalScrollIndicator={false}
-            onScroll={e => setScrollYSnap(e.nativeEvent.contentOffset.y)}
+            onScroll={e => {
+              const y = e.nativeEvent.contentOffset.y;
+              setScrollYSnap(y);
+              const dArr = daysRef.current;
+              const firstIdx = Math.max(0, Math.floor(y / FLIPPED_ROW_H));
+              const lastIdx  = Math.min(dArr.length - 1, Math.floor((y + chartH) / FLIPPED_ROW_H));
+              if (dArr[firstIdx]) setVisibleFrom(dArr[firstIdx]);
+              if (dArr[lastIdx])  setVisibleTo(dArr[lastIdx]);
+            }}
             scrollEventThrottle={100}>
             {days.map((day, rowIdx) => {
               const entries = (byDay.get(day) ?? [])
@@ -625,7 +762,7 @@ function TimelineChart({
             horizontal
             showsHorizontalScrollIndicator={false}
             scrollEnabled={!isPinching}
-            onLayout={e => setViewportW(e.nativeEvent.layout.width)}
+            onLayout={e => { const w = e.nativeEvent.layout.width; setViewportW(w); viewportWRef.current = w; }}
             onScroll={handleScroll}
             scrollEventThrottle={100}
             style={{ flex: 1 }}
@@ -1741,6 +1878,13 @@ const styles = StyleSheet.create({
 
   zoomBtnFlip: { borderWidth: 1, borderColor: '#6366f1', backgroundColor: 'transparent' },
   zoomBtnFlipOn: { backgroundColor: '#6366f1' },
+
+  tlDateSep: { fontSize: 12, color: '#9ca3af' },
+  tlDateInput: {
+    borderWidth: 1, borderColor: '#e5e7eb', borderRadius: 6,
+    paddingHorizontal: 5, paddingVertical: 3, fontSize: 12, color: '#374151',
+    backgroundColor: '#f9fafb', width: 82,
+  },
 
   // Flipped timeline
   flippedDateLabel: {
