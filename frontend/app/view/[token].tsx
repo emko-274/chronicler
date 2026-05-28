@@ -226,9 +226,19 @@ export default function PublicView() {
           setColorOverrides(new Map(Object.entries(info.colors)));
         }
         setLogs(data);
-        const seen = new Set<string>();
-        const order: string[] = [];
-        data.forEach(l => { if (!seen.has(l.activity_type)) { seen.add(l.activity_type); order.push(l.activity_type); } });
+        // Collect all types in the order they appear in the log data
+        const logTypes: string[] = [];
+        const seenLog = new Set<string>();
+        data.forEach(l => { if (!seenLog.has(l.activity_type)) { seenLog.add(l.activity_type); logTypes.push(l.activity_type); } });
+        // Prefer the owner's type ordering (from info.colors key insertion order), fall back to log order
+        let order: string[];
+        if (info.colors && Object.keys(info.colors).length > 0) {
+          const ownerOrder = Object.keys(info.colors).filter(t => seenLog.has(t));
+          const remaining  = logTypes.filter(t => !ownerOrder.includes(t));
+          order = [...ownerOrder, ...remaining];
+        } else {
+          order = logTypes;
+        }
         setTypeOrder(order);
         setTypeColorOrder(order);
         setVisibleTypes(new Set(order));
